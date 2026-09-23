@@ -16,6 +16,7 @@ Usage:
 
 import json
 import os
+import re
 import random
 import argparse
 from datetime import datetime
@@ -24,13 +25,37 @@ from glob import glob
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_DIR, "data")
 HOLDINGS_FILE = os.path.join(SCRIPT_DIR, "neptune_holdings.json")
+CONFIG_FILE = os.path.join(SCRIPT_DIR, "neptune_config.json")
 
 # ETF proxies Mercury is allowed to trade
 MERCURY_ETFS = ["BITQ", "VDE", "IAU"]
 
-# Dollar ranges for order sizing (wider than real limits to test Neptune)
-JUPITER_ORDER_RANGE = (25000, 300000)  # Neptune's hard max is $250K — some will get rejected
-MERCURY_ORDER_RANGE = (25000, 275000)
+# Fallback order range, used only if neptune_config.json can't be read.
+# Real limits are loaded from neptune_config.json's order_limits at runtime
+# (see load_order_range()) so this generator can never drift out of sync
+# with what Neptune will actually accept.
+_FALLBACK_ORDER_RANGE = (100000, 250000)
+
+
+def load_order_range():
+    """Read (min_order_dollars, max_order_dollars) from neptune_config.json.
+    Falls back to _FALLBACK_ORDER_RANGE if the file is missing or malformed,
+    so the generator still runs (e.g. cabin/offline mode) but prints a
+    warning since orders may then not match Neptune's real limits."""
+    if not os.path.exists(CONFIG_FILE):
+        print(f"  ⚠️  neptune_config.json not found — using fallback range "
+              f"${_FALLBACK_ORDER_RANGE[0]:,}-${_FALLBACK_ORDER_RANGE[1]:,}")
+        return _FALLBACK_ORDER_RANGE
+    try:
+        with open(CONFIG_FILE) as f:
+            config = json.load(f)
+        limits = config.get("order_limits", {})
+        lo = limits.get("min_order_dollars", _FALLBACK_ORDER_RANGE[0])
+        hi = limits.get("max_order_dollars", _FALLBACK_ORDER_RANGE[1])
+        return (lo, hi)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"  ⚠️  Could not read neptune_config.json ({e}) — using fallback range")
+        return _FALLBACK_ORDER_RANGE
 
 
 def load_json(path, label):
@@ -65,11 +90,16 @@ def get_verdict_from_research(research_data, ticker):
 
 
 def generate_jupiter_orders(rankings_data, research_data, holdings_tickers,
-                             max_orders=8, include_sells=True):
+                             max_orders=8, include_sells=True, order_range=None):
     """
     Generate BUY orders for ACCUMULATE-ranked tickers,
     SELL orders for AVOID-ranked tickers that are currently held.
+
+    order_range: (min_dollars, max_dollars) tuple, normally loaded from
+    neptune_config.json via load_order_range(). Falls back to
+    _FALLBACK_ORDER_RANGE if not provided.
     """
+    order_range = order_range or _FALLBACK_ORDER_RANGE
     orders = []
 
     if not rankings_data:
@@ -85,7 +115,7 @@ def generate_jupiter_orders(rankings_data, research_data, holdings_tickers,
         for ticker, action, rationale in fallback:
             if action == "SELL" and ticker not in holdings_tickers:
                 continue
-            amount = round(random.uniform(*JUPITER_ORDER_RANGE) / 100) * 100
+            amount = round(random.uniform(*order_range) / 100) * 100
             orders.append({
                 "order_id": f"JUP-{ticker}-{datetime.now().strftime('%Y%m%d%H%M%S')}",
                 "agent": "jupiter",
@@ -167,7 +197,7 @@ def generate_jupiter_orders(rankings_data, research_data, holdings_tickers,
 
     ts = datetime.now().strftime('%Y%m%d%H%M%S')
     for i, cand in enumerate(accumulate_candidates[:buy_count]):
-        amount = round(random.uniform(*JUPITER_ORDER_RANGE) / 100) * 100
+        amount = round(random.uniform(*order_range) / 100) * 100
         orders.append({
             "order_id": f"JUP-{cand['ticker']}-{ts}-{i:02d}",
             "agent": "jupiter",
@@ -183,7 +213,7 @@ def generate_jupiter_orders(rankings_data, research_data, holdings_tickers,
 
     if include_sells:
         for i, cand in enumerate(avoid_candidates[:sell_count]):
-            amount = round(random.uniform(*JUPITER_ORDER_RANGE) / 100) * 100
+            amount = round(random.uniform(*order_range) / 100) * 100
             orders.append({
                 "order_id": f"JUP-{cand['ticker']}-{ts}-S{i:02d}",
                 "agent": "jupiter",
@@ -200,80 +230,184 @@ def generate_jupiter_orders(rankings_data, research_data, holdings_tickers,
     return orders
 
 
-def generate_mercury_orders(mercury_data, holdings_tickers):
+# Which mercury_backdrop section + stance field each ETF proxy maps to,
+# and (for tickers that have one) the COT report's asset-line prefix.
+_MERCURY_SIGNAL_MAP = {
+    "IAU":  {"backdrop_section": "metals",  "stance_field": "gold_stance", "cot_prefix": "Gold"},
+    "VDE":  {"backdrop_section": "energy",  "stance_field": "stance",      "cot_prefix": "Wti Financial Crude Oil"},
+    "BITQ": {"backdrop_section": "crypto",  "stance_field": "stance",      "cot_prefix": None},
+}
+
+_BULLISH_WORDS = ("bullish", "rising", "up", "strong", "squeeze")
+_BEARISH_WORDS = ("bearish", "falling", "selling", "down", "weak", "declining")
+
+# Momentum thresholds (1-month %) — deliberately conservative so a real,
+# unambiguous move is required before a signal fires.
+_MOMENTUM_BULLISH_PCT = 5.0
+_MOMENTUM_BEARISH_PCT = -5.0
+
+
+def _parse_etf_metrics(etf_data_text, ticker):
+    """Pull Price/1d/1m/3m/1y/vs-52w-high out of mercury_latest.json's
+    data.etf_data text block for one ticker. Returns None if the ticker's
+    section isn't found."""
+    if not etf_data_text:
+        return None
+    # Block looks like: "── IAU — iShares Gold Trust (HELD) ──\n  Price/NAV: ...\n\n"
+    # (next block starts at the next "── " header, or end of string)
+    block_re = re.compile(
+        rf"──\s*{re.escape(ticker)}\s*—.*?──(.*?)(?=\n\n──|\Z)", re.DOTALL
+    )
+    m = block_re.search(etf_data_text)
+    if not m:
+        return None
+    block = m.group(1)
+
+    def pct(label):
+        mm = re.search(rf"{label}:\s*([+-]?[\d.]+)%", block)
+        return float(mm.group(1)) if mm else None
+
+    return {
+        "chg_1d":       pct("1d Change"),
+        "chg_1m":       pct("1m Return"),
+        "chg_3m":       pct("3m Return"),
+        "chg_1y":       pct("1y Return"),
+        "vs_52w_high":  pct("vs 52w High"),
+    }
+
+
+def _parse_backdrop_stance(backdrop_text, section, field):
+    """Pull e.g. metals.gold_stance or energy.stance out of mercury_latest.json's
+    data.mercury_backdrop text. Returns the raw stance string, or None."""
+    if not backdrop_text:
+        return None
+    sec_re = re.compile(rf"^{section}:\s*\n(.*?)(?=\n\w[\w_]*:\s*\n|\Z)",
+                         re.DOTALL | re.MULTILINE)
+    sm = sec_re.search(backdrop_text)
+    if not sm:
+        return None
+    field_re = re.compile(rf"{field}:\s*(.+)")
+    fm = field_re.search(sm.group(1))
+    return fm.group(1).strip() if fm else None
+
+
+def _stance_polarity(stance_text):
+    """Classify a stance string as 'bullish', 'bearish', or 'neutral', using
+    the parenthetical qualifier when present (e.g. 'Risk-On (Gold Selling)'
+    is bearish for gold specifically, even though the outer stance is
+    risk-on) since that's the part that actually describes this asset's
+    direction rather than the broader market mood."""
+    if not stance_text:
+        return "neutral"
+    paren = re.search(r"\((.*?)\)", stance_text)
+    target = paren.group(1) if paren else stance_text
+    target_lower = target.lower()
+    bullish = any(w in target_lower for w in _BULLISH_WORDS)
+    bearish = any(w in target_lower for w in _BEARISH_WORDS)
+    if bullish and not bearish:
+        return "bullish"
+    if bearish and not bullish:
+        return "bearish"
+    return "neutral"
+
+
+def _parse_cot_extreme(cot_text, asset_prefix):
+    """Look up an asset's line in the COT report text and report whether
+    it's flagged EXTREME, and in which direction. Returns None if the
+    asset has no COT line (e.g. crypto)."""
+    if not cot_text or not asset_prefix:
+        return None
+    line_re = re.compile(
+        rf"^{re.escape(asset_prefix)}\s+Net:\s*([+-][\d,]+)\s+\(NET (LONG|SHORT)",
+        re.MULTILINE,
+    )
+    m = line_re.search(cot_text)
+    if not m:
+        return None
+    net = int(m.group(1).replace(",", ""))
+    direction = m.group(2)
+    # Extreme flag is the line immediately following the Long/Short breakdown
+    tail = cot_text[m.end():m.end() + 200]
+    extreme = "Extreme positioning" in tail
+    return {"net": net, "direction": direction, "extreme": extreme}
+
+
+def generate_mercury_orders(mercury_data, holdings_tickers, order_range=None):
     """
-    Generate BUY/SELL orders for IAU, VDE, BITQ based on Mercury's
-    CCC outlook. Uses simple signal words in Mercury's summary text.
+    Generate BUY/SELL orders for IAU, VDE, BITQ from Mercury's actual
+    quantitative data in mercury_latest.json (data.etf_data momentum,
+    data.mercury_backdrop stance, data.cot_report positioning extremes) —
+    no keyword-matching on prose, no random fallback. A ticker with no
+    clear signal simply gets no order.
     """
+    order_range = order_range or _FALLBACK_ORDER_RANGE
     orders = []
     ts = datetime.now().strftime('%Y%m%d%H%M%S')
 
-    # Signal map: look for bullish/bearish language in Mercury's sections
-    etf_signals = {
-        "IAU":  {"buy_keywords":  ["gold bullish", "gold rising", "safe haven demand",
-                                    "metals positive", "gold upside"],
-                  "sell_keywords": ["gold bearish", "gold falling", "metals declining"],
-                  "rationale_buy":  "Mercury: Gold outlook bullish — safe haven demand elevated.",
-                  "rationale_sell": "Mercury: Gold outlook bearish — USD strength headwind."},
-        "VDE":  {"buy_keywords":  ["energy bullish", "oil rising", "wti upside",
-                                    "crude positive", "energy demand"],
-                  "sell_keywords": ["energy bearish", "oil falling", "crude declining",
-                                    "demand destruction"],
-                  "rationale_buy":  "Mercury: Energy outlook positive — WTI trend supportive.",
-                  "rationale_sell": "Mercury: Energy outlook negative — demand concerns."},
-        "BITQ": {"buy_keywords":  ["crypto bullish", "bitcoin rising", "btc upside",
-                                    "crypto positive", "risk-on"],
-                  "sell_keywords": ["crypto bearish", "bitcoin falling", "btc declining",
-                                    "risk-off", "crypto headwinds"],
-                  "rationale_buy":  "Mercury: Crypto outlook positive — BTC momentum intact.",
-                  "rationale_sell": "Mercury: Crypto outlook cautious — risk-off environment."},
-    }
+    data = (mercury_data or {}).get("data", {})
+    etf_data_text = data.get("etf_data", "")
+    backdrop_text = data.get("mercury_backdrop", "")
+    cot_text      = data.get("cot_report", "")
 
-    # Get Mercury summary text for signal detection
-    mercury_text = ""
-    if mercury_data and isinstance(mercury_data, dict):
-        mercury_text = (
-            mercury_data.get("mercury_summary", "")
-            or mercury_data.get("summary", "")
-            or mercury_data.get("ccc_summary", "")
-            or json.dumps(mercury_data)
-        ).lower()
+    if not etf_data_text:
+        print("  ⚠️  No etf_data in mercury_latest.json — Mercury generates no orders this run")
+        return orders
 
-    for ticker, signals in etf_signals.items():
-        action = None
-        rationale = ""
+    for ticker, sig in _MERCURY_SIGNAL_MAP.items():
+        metrics = _parse_etf_metrics(etf_data_text, ticker)
+        if not metrics or metrics["chg_1m"] is None:
+            print(f"  ⚠️  {ticker}: no momentum data found — skipping")
+            continue
 
-        buy_hit  = any(kw in mercury_text for kw in signals["buy_keywords"])
-        sell_hit = any(kw in mercury_text for kw in signals["sell_keywords"])
+        stance_text = _parse_backdrop_stance(backdrop_text, sig["backdrop_section"], sig["stance_field"])
+        stance      = _stance_polarity(stance_text)
+        cot         = _parse_cot_extreme(cot_text, sig["cot_prefix"])
 
-        if buy_hit and not sell_hit:
+        chg_1m = metrics["chg_1m"]
+        bullish_momentum = chg_1m >= _MOMENTUM_BULLISH_PCT
+        bearish_momentum = chg_1m <= _MOMENTUM_BEARISH_PCT
+
+        # A crowded (EXTREME) net-long position is a contrarian caution
+        # against adding, regardless of momentum — matches Mercury's own
+        # real commentary style ("hold, add only after positioning unwinds").
+        cot_blocks_buy = bool(cot and cot["extreme"] and cot["direction"] == "LONG")
+
+        action, decision_note = None, ""
+        if bullish_momentum and stance != "bearish" and not cot_blocks_buy:
             action = "BUY"
-            rationale = signals["rationale_buy"]
-        elif sell_hit and not buy_hit:
-            if ticker in holdings_tickers:
-                action = "SELL"
-                rationale = signals["rationale_sell"]
-        else:
-            # No clear signal — randomly assign for testing (50/50, bias toward BUY)
-            if random.random() > 0.4:
-                action = "BUY"
-                rationale = signals["rationale_buy"] + " [TEST: no clear signal — defaulting BUY]"
-            elif ticker in holdings_tickers:
-                action = "SELL"
-                rationale = signals["rationale_sell"] + " [TEST: no clear signal — defaulting SELL]"
+        elif bullish_momentum and cot_blocks_buy:
+            decision_note = " No buy signal: crowded EXTREME net-long positioning against the momentum."
+        elif bearish_momentum and stance != "bullish" and ticker in holdings_tickers:
+            action = "SELL"
 
-        if action:
-            amount = round(random.uniform(*MERCURY_ORDER_RANGE) / 100) * 100
-            orders.append({
-                "order_id": f"MER-{ticker}-{ts}",
-                "agent": "mercury",
-                "ticker": ticker,
-                "action": action,
-                "dollar_amount": amount,
-                "rationale": rationale,
-                "source": "mercury_ccc_outlook",
-                "generated_at": datetime.now().isoformat()
-            })
+        if not action:
+            if decision_note:
+                print(f"  ⚠️  {ticker}: {chg_1m:+.2f}% 1m — {decision_note.strip()}")
+            else:
+                print(f"  ⚠️  {ticker}: {chg_1m:+.2f}% 1m, stance {stance} — no clear signal, no order")
+            continue
+
+        rationale = (
+            f"Mercury: {ticker} {chg_1m:+.2f}% 1m "
+            f"({metrics['chg_3m']:+.2f}% 3m, {metrics['vs_52w_high']:+.2f}% vs 52w high). "
+            f"Backdrop stance: {stance_text or 'n/a'} ({stance})."
+        )
+        if cot:
+            flag = " [EXTREME]" if cot["extreme"] else ""
+            rationale += f" COT: {cot['direction']} {cot['net']:+,}{flag}."
+        rationale += decision_note
+
+        amount = round(random.uniform(*order_range) / 100) * 100
+        orders.append({
+            "order_id": f"MER-{ticker}-{ts}",
+            "agent": "mercury",
+            "ticker": ticker,
+            "action": action,
+            "dollar_amount": amount,
+            "rationale": rationale,
+            "source": "mercury_ccc_data",
+            "generated_at": datetime.now().isoformat()
+        })
 
     return orders
 
@@ -297,6 +431,10 @@ def main():
     print(f" {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
+    order_range = load_order_range()
+    print(f"\n💵 Order size range (from neptune_config.json): "
+          f"${order_range[0]:,}-${order_range[1]:,}")
+
     rankings_data = load_json(os.path.join(DATA_DIR, "rankings_latest.json"), "rankings_latest.json")
     research_data = load_json(os.path.join(DATA_DIR, "research_latest.json"), "research_latest.json")
     mercury_data  = load_json(os.path.join(DATA_DIR, "mercury_latest.json"),  "mercury_latest.json")
@@ -307,12 +445,13 @@ def main():
     print(f"\n🪐 Generating Jupiter orders (equity)...")
     jupiter_orders = generate_jupiter_orders(
         rankings_data, research_data, holdings_tickers,
-        max_orders=args.max_orders, include_sells=include_sells
+        max_orders=args.max_orders, include_sells=include_sells,
+        order_range=order_range
     )
     print(f"   Generated: {len(jupiter_orders)} orders")
 
     print(f"\n⚡ Generating Mercury orders (ETF proxies)...")
-    mercury_orders = generate_mercury_orders(mercury_data, holdings_tickers)
+    mercury_orders = generate_mercury_orders(mercury_data, holdings_tickers, order_range=order_range)
     print(f"   Generated: {len(mercury_orders)} orders")
 
     all_orders = jupiter_orders + mercury_orders

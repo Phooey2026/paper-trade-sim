@@ -44,84 +44,160 @@ os.makedirs(CALENDARS_DIR, exist_ok=True)
 
 # ── Venue & Activity Selection ────────────────────────────────────────────
 
-def _detect_activity_in_text(text):
+# Team-specific keywords — matching one of these tells us exactly which
+# team/stadium was discussed, not just which sport. SoFi Stadium is
+# deliberately excluded here since it's shared by the Rams and Chargers
+# and would be ambiguous; a bare "SoFi" mention falls through to the
+# generic sport keywords below instead.
+_SPORT_TEAM_KEYWORDS = [
+    ("Baseball",   "mlb", "LAD", ["dodgers", "dodger stadium"]),
+    ("Baseball",   "mlb", "SDP", ["padres", "petco park", "petco"]),
+    ("Baseball",   "mlb", "LAA", ["angels", "angel stadium"]),
+    ("Baseball",   "mlb", "SFG", ["giants", "oracle park"]),
+    ("Basketball", "nba", "LAL", ["lakers", "crypto.com arena"]),
+    ("Basketball", "nba", "LAC", ["clippers", "intuit dome"]),
+    ("Basketball", "nba", "SAC", ["kings", "golden 1 center"]),
+    ("Basketball", "nba", "GSW", ["warriors", "chase center"]),
+    ("Football",   "nfl", "LAR", ["rams"]),
+    ("Football",   "nfl", "LAC", ["chargers"]),
+    ("Football",   "nfl", "SF",  ["49ers", "niners", "levi's stadium"]),
+]
+
+# Generic sport mentions with no team named — resolved against the FA's own
+# team for that league (if they follow one).
+_SPORT_GENERIC_KEYWORDS = [
+    ("Baseball",   "mlb", ["baseball"]),
+    ("Basketball", "nba", ["basketball", "nba game"]),
+    ("Football",   "nfl", ["football", "nfl game"]),
+]
+
+_OTHER_ACTIVITY_KEYWORDS = [
+    ("Golf",            ["golf", "golf course", "round of golf", "tee time"]),
+    ("Surfing",         ["surfing", "surf", "waves", "board"]),
+    ("Sailing",         ["sailing", "sail", "yacht", "yacht club", "st. francis"]),
+    ("Fishing",         ["fishing", "fisherman", "fish", "charters", "wharf"]),
+    ("Hiking",          ["hiking", "hike", "trail", "canyon", "temescal", "marin"]),
+    ("Mountain Biking", ["mountain biking", "mountain bike", "mtb", "singletrack"]),
+    ("Tennis",          ["tennis", "court"]),
+    ("Skiing",          ["skiing", "ski", "tahoe", "mammoth", "big bear"]),
+    ("Lunch",           ["lunch", "restaurant", "spago", "nobu", "dinner"]),
+    ("Coffee",          ["coffee", "cafe", "quick chat"]),
+]
+
+
+def _detect_activity_in_text(text, fa=None):
     """
     Scan email text for a specific activity already discussed.
-    Returns the activity name if found, None otherwise.
-    Used to preserve continuity when Venus already pitched a specific activity in Week 1.
+    Returns {"activity": ..., "league": ... or None, "team_code": ... or None}
+    if found, None otherwise. Used to preserve continuity when Venus already
+    pitched a specific activity in Week 1.
+
+    A team name (e.g. "Lakers") resolves to that exact team. A bare sport
+    word with no team named (e.g. "basketball") resolves to the FA's own
+    team for that league, if `fa` is given and they follow one.
     """
     if not text:
         return None
     text_lower = text.lower()
-    # Check in priority order — most specific first
-    activity_keywords = [
-        ("Baseball",       ["baseball", "padres", "dodgers", "giants", "angels", "petco", "dodger stadium", "oracle park", "angel stadium"]),
-        ("Golf",           ["golf", "golf course", "round of golf", "tee time"]),
-        ("Surfing",        ["surfing", "surf", "waves", "board"]),
-        ("Sailing",        ["sailing", "sail", "yacht", "yacht club", "st. francis"]),
-        ("Fishing",        ["fishing", "fisherman", "fish", "charters", "wharf"]),
-        ("Hiking",         ["hiking", "hike", "trail", "canyon", "temescal", "marin"]),
-        ("Mountain Biking",["mountain biking", "mountain bike", "mtb", "singletrack"]),
-        ("Tennis",         ["tennis", "court"]),
-        ("Skiing",         ["skiing", "ski", "tahoe", "mammoth", "big bear"]),
-        ("Lunch",          ["lunch", "restaurant", "spago", "nobu", "dinner"]),
-        ("Coffee",         ["coffee", "cafe", "quick chat"]),
-    ]
-    for activity, keywords in activity_keywords:
+
+    for activity, league, team_code, keywords in _SPORT_TEAM_KEYWORDS:
         if any(kw in text_lower for kw in keywords):
-            return activity
+            return {"activity": activity, "league": league, "team_code": team_code}
+
+    for activity, league, keywords in _SPORT_GENERIC_KEYWORDS:
+        if any(kw in text_lower for kw in keywords):
+            team_code = (fa or {}).get(f"{league}_team")
+            if team_code:
+                return {"activity": activity, "league": league, "team_code": team_code}
+
+    for activity, keywords in _OTHER_ACTIVITY_KEYWORDS:
+        if any(kw in text_lower for kw in keywords):
+            return {"activity": activity, "league": None, "team_code": None}
+
     return None
 
 
-def select_activity_and_venue(fa, venues, email_record=None):
+def _stadium_for(venues, league, team_code):
+    """League-namespaced stadium lookup (stadiums.mlb/nba/nfl.*) — flat
+    lookups broke once venues.json was restructured to disambiguate the
+    NBA/NFL 'LAC' collision (Clippers vs Chargers)."""
+    return venues.get("stadiums", {}).get(league or "", {}).get(team_code or "")
+
+
+def _live_sport_hooks(sports_hooks):
     """
-    Pick the best activity for this FA based on interests.
-    Priority:
+    Hooks with an actual upcoming home game on file — these are the ones
+    worth offering as a meeting activity right now. A team an FA follows
+    with no game coming up (off-season, or just nothing in the next 30
+    days) isn't a live hook and falls through to other activities instead.
+    """
+    return [h for h in (sports_hooks or []) if h.get("upcoming", {}).get("next_home")]
+
+
+def select_activity_and_venue(fa, venues, sports_hooks=None, email_record=None):
+    """
+    Pick the best activity for this FA, plus any other options that are
+    equally live right now.
+    Priority for the PRIMARY pick:
       0. Honor activity already discussed in Week 1 email/FA reply (continuity)
-      1. Baseball (if fan)
-      2. Specific interest match
+      1. Live sport hooks (an upcoming home game on file, any of MLB/NBA/NFL) —
+         if the FA follows multiple teams that all have games coming up,
+         every one of them comes back as an option so Venus's email can
+         offer all of them and let the FA choose, instead of the pipeline
+         silently picking one by fixed priority.
+      2. Specific non-sport interest match
       3. Lunch
       4. Coffee
-    Returns (activity_type, venue_dict, close_modifier)
+    Returns (activity_type, venue_dict, close_modifier, alt_options) where
+    alt_options is a list of (activity_type, venue_dict, close_modifier)
+    for any additional live sport hooks beyond the primary pick.
     """
     interests    = fa.get("interests", [])
     territory    = fa.get("territory", "Los Angeles")
-    team_code    = fa.get("team", "LAD")
     modifiers    = venues.get("activity_close_modifiers", {})
     interest_map = venues.get("activity_to_interest_map", {})
+    live_hooks   = _live_sport_hooks(sports_hooks)
 
     # 0. Check if a specific activity was already discussed in Week 1
     if email_record:
         week1_body  = email_record.get("body", "")
         fa_reply    = email_record.get("response_body", "")
         # Check FA reply first (stronger signal — they responded to it)
-        discussed = _detect_activity_in_text(fa_reply) or _detect_activity_in_text(week1_body)
+        discussed = _detect_activity_in_text(fa_reply, fa) or _detect_activity_in_text(week1_body, fa)
         if discussed:
-            # Find the right venue for this activity
+            act = discussed["activity"]
             outdoor_venues = venues.get("outdoor_activities", {})
-            if discussed == "Baseball":
-                stadium = venues["stadiums"].get(team_code, venues["stadiums"]["LAD"])
-                return "Baseball", stadium, modifiers.get("Baseball", 0.20)
-            elif discussed in outdoor_venues:
-                locs = outdoor_venues.get(discussed, {}).get(territory, [])
+            if discussed["league"]:
+                stadium = _stadium_for(venues, discussed["league"], discussed["team_code"])
+                if stadium:
+                    return act, stadium, modifiers.get(act, 0.20), []
+            elif act in outdoor_venues:
+                locs = outdoor_venues.get(act, {}).get(territory, [])
                 if locs:
-                    venue = random.choice(locs)
-                    return discussed, venue, modifiers.get(discussed, 0.08)
-            elif discussed == "Lunch":
+                    return act, random.choice(locs), modifiers.get(act, 0.08), []
+            elif act == "Lunch":
                 restaurants = venues.get("restaurants", {}).get(territory, {})
                 upscale = restaurants.get("upscale", [])
                 if upscale:
-                    return "Lunch", random.choice(upscale[:3]), modifiers.get("Lunch", 0.05)
-            elif discussed == "Coffee":
+                    return "Lunch", random.choice(upscale[:3]), modifiers.get("Lunch", 0.05), []
+            elif act == "Coffee":
                 restaurants = venues.get("restaurants", {}).get(territory, {})
                 coffees = restaurants.get("coffee", [])
                 if coffees:
-                    return "Coffee", random.choice(coffees), modifiers.get("Coffee", 0.00)
+                    return "Coffee", random.choice(coffees), modifiers.get("Coffee", 0.00), []
+            # If we couldn't resolve a venue for the discussed activity
+            # (e.g. missing stadium data), fall through to normal priority.
 
-    # 1. Baseball first if they're a fan
-    if "Baseball" in interests:
-        stadium = venues["stadiums"].get(team_code, venues["stadiums"]["LAD"])
-        return "Baseball", stadium, modifiers.get("Baseball", 0.20)
+    # 1. Live sport hooks — offer ALL of them when more than one is live
+    hook_options = []
+    for hook in live_hooks:
+        stadium = _stadium_for(venues, hook["league"], hook["team_code"])
+        if stadium:
+            act = hook["interest_tag"]
+            hook_options.append((act, stadium, modifiers.get(act, 0.20)))
+    if hook_options:
+        primary, *alternates = hook_options
+        return primary[0], primary[1], primary[2], alternates
 
     # 2. Match specific outdoor/sport interests in priority order
     outdoor_priority = ["Golf", "Surfing", "Sailing", "Fishing", "Tennis", "Skiing", "Hiking"]
@@ -133,7 +209,7 @@ def select_activity_and_venue(fa, venues, email_record=None):
             locs = outdoor_venues.get(activity, {}).get(territory, [])
             if locs:
                 venue = random.choice(locs)
-                return activity, venue, modifiers.get(activity, 0.08)
+                return activity, venue, modifiers.get(activity, 0.08), []
 
     # 3. Lunch if food/social interests
     lunch_triggers = interest_map.get("Lunch", [])
@@ -142,17 +218,17 @@ def select_activity_and_venue(fa, venues, email_record=None):
         upscale = restaurants.get("upscale", [])
         if upscale:
             venue = random.choice(upscale[:3])  # pick from top 3
-            return "Lunch", venue, modifiers.get("Lunch", 0.05)
+            return "Lunch", venue, modifiers.get("Lunch", 0.05), []
 
     # 4. Coffee as final fallback
     restaurants = venues.get("restaurants", {}).get(territory, {})
     coffees = restaurants.get("coffee", [])
     if coffees:
         venue = random.choice(coffees)
-        return "Coffee", venue, modifiers.get("Coffee", 0.00)
+        return "Coffee", venue, modifiers.get("Coffee", 0.00), []
 
     # Last resort
-    return "Coffee", {"name": "a local coffee shop", "address": territory}, 0.00
+    return "Coffee", {"name": "a local coffee shop", "address": territory}, 0.00, []
 
 
 def get_next_business_week_dates():
@@ -345,8 +421,30 @@ def _detect_materials_request(reply_text):
     return any(s in lower for s in signals)
 
 
-def draft_meeting_proposal(email_record, fa, calendar, activity, venue, venues_data):
-    """Draft Venus follow-up email proposing the meeting with Jay."""
+_SPORT_ACTIVITIES = ("Baseball", "Basketball", "Football")
+_OUTDOOR_ACTIVITIES = ("Surfing", "Golf", "Hiking", "Mountain Biking", "Sailing", "Fishing", "Tennis", "Skiing")
+
+
+def _venue_desc(activity, venue):
+    """One-line venue description for the meeting prompt. Shared between
+    the primary pick and any alternate live sport hooks."""
+    if activity in _SPORT_ACTIVITIES:
+        return (
+            f"{venue.get('name')} — {venue.get('club_level', 'great seats')}. "
+            f"Obsidian Capital has tickets and Jay would love to take you to the game."
+        )
+    elif activity in _OUTDOOR_ACTIVITIES:
+        return f"{venue.get('name')} — {venue.get('notes', '')}."
+    else:
+        return f"{venue.get('name')} — {venue.get('address', '')}."
+
+
+def draft_meeting_proposal(email_record, fa, calendar, activity, venue, venues_data, alt_options=None):
+    """Draft Venus follow-up email proposing the meeting with Jay.
+    alt_options (optional): list of (activity, venue, close_modifier) for
+    other live sport hooks the FA also follows — when present, Venus's
+    email offers all of them and lets the FA pick, rather than defaulting
+    to just the primary one."""
     import random as _random
 
     open_slots = calendar.get("open_slots", [])
@@ -359,18 +457,27 @@ def draft_meeting_proposal(email_record, fa, calendar, activity, venue, venues_d
     )
 
     # Build venue description — Jay is attending, not Venus
-    if activity == "Baseball":
-        venue_desc = (
-            f"{venue.get('name')} — {venue.get('club_level', 'great seats')}. "
-            f"Obsidian Capital has tickets and Jay would love to take you to the game."
-        )
-        activity_pitch = f"catch a game at {venue.get('name')} with Jay"
-    elif activity in ("Surfing", "Golf", "Hiking", "Mountain Biking", "Sailing", "Fishing", "Tennis", "Skiing"):
-        venue_desc = f"{venue.get('name')} — {venue.get('notes', '')}."
+    venue_desc = _venue_desc(activity, venue)
+    if activity in _SPORT_ACTIVITIES:
+        activity_pitch = f"catch a {activity.lower()} game at {venue.get('name')} with Jay"
+    elif activity in _OUTDOOR_ACTIVITIES:
         activity_pitch = f"get out for some {activity.lower()} at {venue.get('name')} with Jay"
     else:
-        venue_desc = f"{venue.get('name')} — {venue.get('address', '')}."
         activity_pitch = f"have Jay meet you at {venue.get('name')}"
+
+    multi_hook_instruction = ""
+    if alt_options:
+        fa_first_name = fa["first_name"]
+        alt_lines = [f"  - {activity} at {venue.get('name')} — {venue_desc}"]
+        for alt_activity, alt_venue, _alt_mod in alt_options:
+            alt_lines.append(f"  - {alt_activity} at {alt_venue.get('name')} — {_venue_desc(alt_activity, alt_venue)}")
+        multi_hook_instruction = f"""
+MULTIPLE LIVE HOOKS:
+{fa_first_name} follows more than one team with a game coming up right now:
+{chr(10).join(alt_lines)}
+Briefly mention that Jay has a couple of options and ask which one sounds best —
+don't just pick one for them. Keep it light, not a bulleted list in the email itself.
+"""
 
     is_assistant = fa.get("contact_via_assistant") and fa.get("assistant_name")
     contact_name = fa.get("assistant_name") if is_assistant else fa["first_name"]
@@ -425,7 +532,7 @@ MEETING DETAILS:
 - Venue: {venue_desc}
 - Time options (ask what works for THEM, do not say you have these open):
 {slot_lines}
-
+{multi_hook_instruction}
 SCHEDULING CONTEXT:
 {scheduling_context}
 
@@ -433,8 +540,8 @@ WRITING RULES:
 - Reference something specific from their reply — show you read it carefully.
 - Jay attends the meeting, not you. Never write "I'll see you there" or "I'd love to meet."
 - Never claim to own their calendar. Ask what works for THEM.
-- Keep it to 4-5 sentences. One clear ask.
-- Baseball: Obsidian Capital has the tickets and Jay would love to take them to the game.
+- Keep it to 4-5 sentences. One clear ask (or a quick either/or if multiple hooks are live).
+- Baseball/Basketball/Football: Obsidian Capital has the tickets and Jay would love to take them to the game.
 - Sign off as: — Venus | Obsidian Capital
 
 RESPOND WITH ONLY:
@@ -615,13 +722,19 @@ def run(dry_run=False, verbose=False):
             open_slots = calendar.get("open_slots", [])
             print(f"      Open slots: {[s['day'] + ' ' + s['time'] for s in open_slots]}")
 
-            # Select activity and venue
-            activity, venue, close_mod = select_activity_and_venue(fa, venues_data, email_record=rec)
-            print(f"   🎯 Activity: {activity} @ {venue.get('name', 'TBD')}")
+            # Select activity and venue — sports_hooks (persisted at Week 1
+            # from fetch_prospects.py) carries the real upcoming-game data,
+            # so this can tell whether a hook is actually live right now.
+            sports_hooks = rec.get("sports_hooks", [])
+            activity, venue, close_mod, alt_options = select_activity_and_venue(
+                fa, venues_data, sports_hooks=sports_hooks, email_record=rec
+            )
+            print(f"   🎯 Activity: {activity} @ {venue.get('name', 'TBD')}"
+                  + (f"  (+{len(alt_options)} more live hook{'s' if len(alt_options) > 1 else ''})" if alt_options else ""))
             print(f"      Close modifier: +{close_mod*100:.0f}%")
 
             # Draft meeting proposal email
-            subject, body = draft_meeting_proposal(rec, fa, calendar, activity, venue, venues_data)
+            subject, body = draft_meeting_proposal(rec, fa, calendar, activity, venue, venues_data, alt_options=alt_options)
             print(f"   📧 Proposal subject: {subject}")
             if verbose:
                 print(f"\n{body}\n")
@@ -631,6 +744,10 @@ def run(dry_run=False, verbose=False):
                 "venue_name":    venue.get("name", ""),
                 "venue_address": venue.get("address", ""),
                 "venue_details": venue,
+                "alt_options": [
+                    {"activity": a, "venue_name": v.get("name", ""), "venue_address": v.get("address", "")}
+                    for a, v, _cm in alt_options
+                ],
                 "open_slots":    open_slots,
                 "proposed_at":   datetime.now().isoformat(),
                 "follow_up_subject": subject,

@@ -158,23 +158,36 @@ def _safe_load_week(email_file):
 # ── Week 1: Draft outreach emails ─────────────────────────────────────────
 
 def build_venus_prompt(prospect):
-    fa       = prospect["profile"]
-    baseball = prospect["baseball"]
-    perf     = prospect["ocrff_performance"]
-    notes    = prospect["strategy_notes"]
-    next_home = baseball["upcoming"].get("next_home")
-    home_games = baseball["upcoming"].get("home_games", [])[:3]
+    fa           = prospect["profile"]
+    perf         = prospect["ocrff_performance"]
+    notes        = prospect["strategy_notes"]
+    sports_hooks = prospect.get("sports_hooks", [])
 
-    if next_home and "Baseball" in fa.get("interests", []):
-        bb_context = f"""
-BASEBALL HOOK:
-{fa['first_name']} is a fan of the {baseball['team_name']}.
-Upcoming home games:
-{chr(10).join('  - ' + g['label'] for g in home_games)}
-Jay has access to tickets. Use this as a relationship hook if relevant.
-"""
+    # Build one block per league the FA follows that has an upcoming home
+    # game on file (MLB/NBA/NFL — whichever apply). A FA can follow more
+    # than one team; when they do, the LLM is told it only needs to lean on
+    # whichever hook feels most natural, not list all of them.
+    hook_blocks = []
+    for hook in sports_hooks:
+        next_home = hook["upcoming"].get("next_home")
+        if not next_home:
+            continue
+        home_games = hook["upcoming"].get("home_games", [])[:3]
+        hook_blocks.append(
+            f"{hook['interest_tag'].upper()} HOOK: {fa['first_name']} is a fan of the {hook['team_name']}.\n"
+            f"Upcoming home games:\n" + "\n".join('  - ' + g['label'] for g in home_games)
+        )
+
+    if hook_blocks:
+        sports_context = "\n\n".join(hook_blocks)
+        if len(hook_blocks) > 1:
+            sports_context += (
+                f"\n\n{fa['first_name']} follows more than one team with games coming up — "
+                "pick whichever hook feels most natural to reference, you don't need to mention all of them."
+            )
+        sports_context += "\nJay has access to tickets. Use this as a relationship hook if relevant."
     else:
-        bb_context = "No baseball hook available for this FA."
+        sports_context = "No live sports hook for this FA right now (no upcoming home game on file)."
 
     ytd    = perf["ytd"]
     one_yr = perf["one_year"]
@@ -196,7 +209,7 @@ Your job: draft a short, personalized outreach email to get a face-to-face meeti
 WRITING STYLE:
 - Casual but professional. Think of how a savvy wholesaler writes — not a corporate robot.
 - Short: 4-6 sentences max. No walls of text.
-- Personal: reference their interests, the baseball schedule, or a mutual connection.
+- Personal: reference their interests, an upcoming game for their team, or a mutual connection.
 - One clear call to action: ask for a meeting or a call.
 - Sign off as: — Venus | Obsidian Capital
 - Subject line should be punchy and personal, not generic.
@@ -213,7 +226,7 @@ Education: {fa.get('education', 'N/A')}
 
 {warm_ref}
 
-{bb_context}
+{sports_context}
 
 OCRFF PERFORMANCE (Obsidian Capital Research Fund):
 - YTD: OCRFF +{ytd['ocrff']}% vs S&P 500 +{ytd['sp500']}% (alpha: +{ytd['alpha']}%)
@@ -331,6 +344,7 @@ def save_to_outbox(fa_id, to_email, subject, body, prospect):
         "response":       None,
         "prospect_score": prospect.get("prospect_score", 0),
         "strategy_notes": prospect.get("strategy_notes", []),
+        "sports_hooks":   prospect.get("sports_hooks", []),
     }
     with open(filename, "w") as f:
         json.dump(email_record, f, indent=2)
@@ -374,8 +388,13 @@ def run_week1(args):
         print(f"{'─'*60}")
         print(f"  [{i+1}/{len(prospects)}] {fa['name']} | {fa['firm']} | {fa['territory']}")
         print(f"  To: {to_name} <{to_email}>")
+        sport_emoji = "".join(
+            {"Baseball": "⚾", "Basketball": "🏀", "Football": "🏈"}[tag]
+            for tag in ("Baseball", "Basketball", "Football")
+            if tag in fa.get("interests", [])
+        )
         print(f"  Score: {prospect.get('prospect_score', 0)} | Book: {fa['book_size']} | "
-              f"{'⚾ ' if 'Baseball' in fa.get('interests',[]) else ''}"
+              f"{sport_emoji + ' ' if sport_emoji else ''}"
               f"{'🔥 Warm' if fa.get('warm_lead') else ''}")
         print()
 

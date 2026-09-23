@@ -66,21 +66,56 @@ def load_fa_calendar(fa_id):
     return None
 
 
+def select_confirmed_option(proposal):
+    """
+    Pick which activity the FA is confirming. When Venus's Week 2 email
+    offered more than one live sport hook (alt_options), this is where that
+    choice actually gets made — pre-selected in Python for the same reason
+    the time slot is pre-selected below: an LLM asked to "pick one" tends to
+    just default to whichever option was listed first/last rather than
+    genuinely choosing, so we choose here and have it write a natural
+    confirmation for whichever option was picked.
+    Returns a dict: {"activity", "venue_name", "venue_address", "venue_details"}
+    """
+    primary = {
+        "activity":      proposal.get("activity", "Coffee"),
+        "venue_name":    proposal.get("venue_name", "a local spot"),
+        "venue_address": proposal.get("venue_address", ""),
+        "venue_details": proposal.get("venue_details", {}),
+    }
+    alt_options = proposal.get("alt_options", [])
+    if not alt_options:
+        return primary
+    options = [primary] + [
+        {
+            "activity":      alt.get("activity", "Coffee"),
+            "venue_name":    alt.get("venue_name", "a local spot"),
+            "venue_address": alt.get("venue_address", ""),
+            "venue_details": {},  # alt_options only carry name/address — see venus_week2.py
+        }
+        for alt in alt_options
+    ]
+    return random.choice(options)
+
+
 def build_confirmation_prompt(rec, fa, calendar):
     """
     Build the FA Agent prompt to confirm a meeting slot.
-    We pre-select the slot in Python to avoid LLM recency bias
+    We pre-select the slot (and, when multiple live sport hooks were
+    offered, which activity) in Python to avoid LLM recency bias
     (models tend to always pick the last option offered).
     The FA Agent just needs to write a natural confirmation reply.
     """
     import random as _random
 
-    proposal    = rec.get("meeting_proposal", {})
-    activity    = proposal.get("activity", "Coffee")
-    venue_name  = proposal.get("venue_name", "a local spot")
-    open_slots  = proposal.get("open_slots", [])
-    follow_up   = rec.get("follow_up_body", "")
-    fa_reply    = rec.get("response_body", "")
+    proposal        = rec.get("meeting_proposal", {})
+    confirmed_option = select_confirmed_option(proposal)
+    activity        = confirmed_option["activity"]
+    venue_name      = confirmed_option["venue_name"]
+    had_choice      = bool(proposal.get("alt_options"))
+    open_slots      = proposal.get("open_slots", [])
+    follow_up       = rec.get("follow_up_body", "")
+    fa_reply        = rec.get("response_body", "")
 
     # Pre-select the slot randomly — don't let the LLM decide, it always picks the last one
     selected_slot = _random.choice(open_slots) if open_slots else None
@@ -122,6 +157,7 @@ MEETING CONFIRMED:
 Activity: {activity} at {venue_name}
 You are available on {confirmed_day}, {confirmed_date} at {confirmed_time}.
 {cal_summary}
+{"NOTE: Venus's email offered more than one live game to choose from — you picked " + activity + ". Feel free to briefly mention that's the one you're excited about." if had_choice else ""}
 
 YOUR TASK:
 Write a brief, natural confirmation reply as {fa['first_name']} (or their assistant).
@@ -133,7 +169,7 @@ CONFIRMED_SLOT: {confirmed_day}, {confirmed_date} at {confirmed_time}
 REPLY:
 [2-4 sentence confirmation email, in character]"""
 
-    return prompt, selected_slot
+    return prompt, selected_slot, confirmed_option
 
 
 def call_fa_llm(prompt, verbose=False):
@@ -223,19 +259,22 @@ def run(dry_run=False, verbose=False):
             continue
 
         proposal   = rec.get("meeting_proposal", {})
-        activity   = proposal.get("activity", "Coffee")
-        venue_name = proposal.get("venue_name", "")
         open_slots = proposal.get("open_slots", [])
+        n_alts     = len(proposal.get("alt_options", []))
 
         print(f"   {'─'*55}")
         print(f"   {fa['name']} | {fa['firm']}")
-        print(f"   Activity: {activity} @ {venue_name}")
 
         calendar = load_fa_calendar(fa_id)
         if not calendar:
             print(f"   ⚠️  No calendar found for {fa_id} — using open_slots directly")
 
-        prompt, pre_selected_slot = build_confirmation_prompt(rec, fa, calendar)
+        prompt, pre_selected_slot, confirmed_option = build_confirmation_prompt(rec, fa, calendar)
+        activity   = confirmed_option["activity"]
+        venue_name = confirmed_option["venue_name"]
+        print(f"   Activity: {activity} @ {venue_name}"
+              + (f"  (chosen from {n_alts + 1} live options)" if n_alts else ""))
+
         raw    = call_fa_llm(prompt, verbose=verbose)
 
         if verbose:
@@ -257,8 +296,8 @@ def run(dry_run=False, verbose=False):
             "duration":     confirmed_slot.get("duration", "90 min") if confirmed_slot else "90 min",
             "activity":     activity,
             "venue_name":   venue_name,
-            "venue_address": proposal.get("venue_address", ""),
-            "venue_details": proposal.get("venue_details", {}),
+            "venue_address": confirmed_option.get("venue_address", ""),
+            "venue_details": confirmed_option.get("venue_details", {}),
             "fa_reply":     reply,
             "confirmed_at": datetime.now().isoformat(),
         }

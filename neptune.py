@@ -182,8 +182,15 @@ def build_neptune_prompt(order, preflight, holdings, config):
     total_portfolio = summary.get("total_portfolio_value", 0)
     cash_pct        = summary.get("cash_pct", 0)
 
-    limits  = config.get("order_limits", {})
-    soft    = config.get("soft_criteria", {})
+    limits      = config.get("order_limits", {})
+    pos_limits  = config.get("position_limits", {})
+    cash_limits = config.get("cash_limits", {})
+    soft        = config.get("soft_criteria", {})
+
+    min_order      = limits.get("min_order_dollars", 5000)
+    max_order      = limits.get("max_order_dollars", 50000)
+    max_pos_pct    = pos_limits.get("max_single_position_pct", 10.0)
+    cash_floor_pct = cash_limits.get("min_cash_floor_pct", 5.0)
 
     warnings_text = "\n".join(f"  ⚠️  {w}" for w in preflight.warnings) if preflight.warnings else "  None"
     proj_pct = preflight.metrics.get("projected_position_pct", "N/A")
@@ -217,6 +224,14 @@ PORTFOLIO SNAPSHOT
 Total portfolio : ${total_portfolio:,.2f}
 Cash (VMRXX)    : ${cash_value:,.2f} ({cash_pct:.2f}%)
 Cash after BUY  : ${cash_value - dollars:,.2f} (if approved)
+
+═══════════════════════════════════════════════════════
+PORTFOLIO GUARDRAILS (current live thresholds — cite these exact figures
+in your rationale, don't assume or recall figures from elsewhere)
+═══════════════════════════════════════════════════════
+Order size range     : ${min_order:,.0f} - ${max_order:,.0f}  (this order already passed this check)
+Max single position  : {max_pos_pct}% of portfolio
+Min cash floor       : {cash_floor_pct}% of portfolio
 
 ═══════════════════════════════════════════════════════
 SOFT-CRITERIA WARNINGS (from automated checks)

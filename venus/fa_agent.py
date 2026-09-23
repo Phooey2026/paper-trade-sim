@@ -75,6 +75,10 @@ def build_fa_prompt(email_record, fa, fund):
     personality_notes = []
     if "Baseball" in fa.get("interests", []):
         personality_notes.append("loves baseball and responds well to game invitations")
+    if "Basketball" in fa.get("interests", []):
+        personality_notes.append("into basketball and responds well to game invitations")
+    if "Football" in fa.get("interests", []):
+        personality_notes.append("a football fan and responds well to game-day invitations")
     if "Golf" in fa.get("interests", []):
         personality_notes.append("golfer — responds well to networking on the course")
     if "Surfing" in fa.get("interests", []):

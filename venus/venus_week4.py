@@ -142,6 +142,8 @@ NARRATIVE STYLE:
 - Jay is speaking — first person, as if dictating into his phone right after the meeting
 - Conversational, specific, vivid — describe the setting, the energy, one moment that stood out
 - If baseball: the inning, a big play, the crowd, what clicked in the conversation
+- If basketball: the quarter, a highlight play, the arena energy, what clicked in the conversation
+- If football: the quarter, a big play or drive, the tailgate/stadium energy, what clicked in the conversation
 - If outdoor activity: conditions (wind, trail, surf), the physical setting, pace of conversation
 - If lunch/coffee: the room, what was ordered, the vibe of the conversation
 - On a close: end with the handshake moment and what happens next
