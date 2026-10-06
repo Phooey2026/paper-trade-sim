@@ -229,9 +229,9 @@ Education: {fa.get('education', 'N/A')}
 {sports_context}
 
 OCRFF PERFORMANCE (Obsidian Capital Research Fund):
-- YTD: OCRFF +{ytd['ocrff']}% vs S&P 500 +{ytd['sp500']}% (alpha: +{ytd['alpha']}%)
-- 1-Year: OCRFF +{one_yr['ocrff']}% vs S&P 500 +{one_yr['sp500']}%
-- 5-Year Annualized: OCRFF +{five_yr['ocrff']}% vs S&P 500 +{five_yr['sp500']}%
+- YTD: OCRFF {ytd['ocrff']:+.1f}% vs S&P 500 {ytd['sp500']:+.1f}% (alpha: {ytd['alpha']:+.1f}%)
+- 1-Year: OCRFF {one_yr['ocrff']:+.1f}% vs S&P 500 {one_yr['sp500']:+.1f}%
+- 5-Year Annualized: OCRFF {five_yr['ocrff']:+.1f}% vs S&P 500 {five_yr['sp500']:+.1f}%
 Use performance data selectively — only if it strengthens the email. Don't force it.
 
 STRATEGY NOTES:
@@ -368,7 +368,7 @@ def run_week1(args):
             pass
 
     print(f"\n📋 Prospects loaded: {len(prospects)}")
-    print(f"   OCRFF YTD: +{data['ocrff_ytd']}% vs S&P +{data['sp500_ytd']}%\n")
+    print(f"   OCRFF YTD: {data['ocrff_ytd']:+.1f}% vs S&P {data['sp500_ytd']:+.1f}%\n")
 
     outbox_files = []
     skipped      = 0

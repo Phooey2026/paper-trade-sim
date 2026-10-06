@@ -4,6 +4,9 @@ generate_issues.py — Orbit Issue Generator
 Pulls 5 random clients from crm_clients.json and assigns realistic
 customer service issues. Outputs orbit_issues_YYYYMMDD_HHMM.json.
 
+Only ACTIVE accounts with a balance are selected, and the same client is
+never picked twice in one run.
+
 Issue types and weights:
   BUY order         20% — client wants to invest more
   SELL order        25% — client wants partial redemption
@@ -19,8 +22,12 @@ Usage:
     python3 generate_issues.py --seed 42
 """
 
-import json, os, random, argparse
+import json, os, sys, random, argparse
 from datetime import datetime, date
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from crm_schema import (SCHEMA_VERSION, random_address, make_designation,
+                        designation_equal, format_address, format_designation)
 
 SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
 PAPER_DIR   = os.path.dirname(SCRIPT_DIR)
@@ -28,6 +35,11 @@ VENUS_DIR   = os.path.join(PAPER_DIR, "venus")
 FUND_FILE   = os.path.join(VENUS_DIR, "ocrff_fund.json")
 CLIENTS_FILE= os.path.join(VENUS_DIR, "crm_clients.json")
 OUT_FILE    = os.path.join(SCRIPT_DIR, "orbit_issues_latest.json")
+
+# One stamp per run. Issue IDs used to be date + counter only, so two runs on the
+# same day produced colliding IDs (ISS-20260928-001 twice) — which also collided
+# transaction, request and form IDs downstream.
+RUN_STAMP = datetime.now().strftime('%Y%m%d-%H%M%S')
 
 ISSUE_WEIGHTS = {
     "buy":         20,
@@ -41,23 +53,6 @@ ISSUE_WEIGHTS = {
 
 BUY_AMOUNTS  = [25000, 50000, 100000, 150000, 250000]
 SELL_AMOUNTS = [25000, 50000, 75000, 100000, 150000, 200000, 250000]
-
-ADDRESSES = [
-    ("1234 Ocean Ave", "Santa Monica", "CA", "90402"),
-    ("567 Elm Street", "La Jolla", "CA", "92037"),
-    ("890 Pacific Coast Hwy", "Malibu", "CA", "90265"),
-    ("321 Sunset Blvd", "Beverly Hills", "CA", "90210"),
-    ("456 Harbor Drive", "Coronado", "CA", "92118"),
-    ("789 Market Street", "San Francisco", "CA", "94105"),
-    ("234 Wilshire Blvd", "Los Angeles", "CA", "90036"),
-    ("901 Mission Street", "San Diego", "CA", "92103"),
-]
-
-BENEFICIARY_NAMES = [
-    "Sarah {last}", "Michael {last}", "Emma {last}", "James {last}",
-    "Jennifer {last} Trust", "Robert {last} Family Trust",
-    "The {last} Family", "David {last}",
-]
 
 HOLDINGS_ASKS = [
     "What stocks are you currently holding in the fund?",
@@ -98,6 +93,23 @@ STATEMENT_NARRATIVES = [
     "What's my current account value? And how are we doing vs the S&P this year?",
 ]
 
+def beneficiary_narrative(current, new):
+    """A client-voice request that matches what actually changes."""
+    has = lambda d, rel: any(b.get("relationship") == rel for b in (d or []))
+    if has(new, "Trust") and not has(current, "Trust"):
+        lead = "I've set up a family trust and want it named as my primary beneficiary."
+    elif has(new, "Spouse") and not has(current, "Spouse"):
+        lead = "I recently got married and need to update my beneficiaries."
+    elif has(current, "Spouse") and not has(new, "Spouse"):
+        lead = "My family situation has changed and I need to update my beneficiaries."
+    elif len([b for b in new if b["type"] == "primary"]) > 1:
+        lead = "I'd like to split my account between more than one beneficiary."
+    else:
+        lead = "I need to update the beneficiaries on my account."
+    return (f"{lead} Here is what I want on file — {format_designation(new)}. "
+            f"Please tell me what you need from me to make this official.")
+
+
 def weighted_choice(weights_dict):
     keys = list(weights_dict.keys())
     weights = list(weights_dict.values())
@@ -105,10 +117,9 @@ def weighted_choice(weights_dict):
 
 def generate_issue(client, fund, issue_type, issue_num):
     nav = fund["current_nav"]
-    last = client["name"].split()[-1]
     account_value = client["ocrff_account_value"]
     shares = client["ocrff_shares"]
-    issue_id = f"ISS-{datetime.now().strftime('%Y%m%d')}-{issue_num:03d}"
+    issue_id = f"ISS-{RUN_STAMP}-{issue_num:03d}"
 
     issue = {
         "issue_id": issue_id,
@@ -138,12 +149,14 @@ def generate_issue(client, fund, issue_type, issue_num):
         }
 
     elif issue_type == "sell":
-        # Don't generate a sell larger than account value
-        max_sell = min(account_value * 0.9, 25000)
+        # Never sell more than 90% of the balance (that would be a full close).
+        # The old cap of $25,000 made every sell the same size.
+        max_sell = account_value * 0.9
         eligible = [a for a in SELL_AMOUNTS if a <= max_sell]
-        if not eligible:
-            eligible = [min(SELL_AMOUNTS)]
-        amount = random.choice(eligible)
+        if eligible:
+            amount = random.choice(eligible)
+        else:                                    # small account: round down to $1K
+            amount = max(1000, int(max_sell // 1000 * 1000))
         shares_to_sell = round(amount / nav, 4)
         issue["narrative"] = random.choice(SELL_NARRATIVES).format(amount=amount)
         issue["parameters"] = {
@@ -166,28 +179,40 @@ def generate_issue(client, fund, issue_type, issue_num):
         issue["parameters"] = {}
 
     elif issue_type == "address":
-        new_addr = random.choice(ADDRESSES)
-        issue["narrative"] = (
-            f"I've recently moved. Please update my address to: "
-            f"{new_addr[0]}, {new_addr[1]}, {new_addr[2]} {new_addr[3]}."
-        )
+        cur_addr = client.get("address")
+        new_addr = random_address(random, client.get("territory"),
+                                  cross_territory_prob=0.25, exclude=cur_addr)
+        cur_mail = bool(client.get("mail_to_fa", False))
+        new_mail = (not cur_mail) if random.random() < 0.25 else cur_mail
+        narrative = (f"I've recently moved. Please update my address to: "
+                     f"{format_address(new_addr)}.")
+        if new_mail != cur_mail:
+            narrative += (" And please have my statements sent to my advisor's office from now on."
+                          if new_mail else
+                          " Also, please send my statements straight to me at the new address, not to my advisor.")
+        issue["narrative"] = narrative
         issue["parameters"] = {
-            "new_street":  new_addr[0],
-            "new_city":    new_addr[1],
-            "new_state":   new_addr[2],
-            "new_zip":     new_addr[3],
+            "new_street":  new_addr["street"],
+            "new_unit":    new_addr["unit"],
+            "new_city":    new_addr["city"],
+            "new_state":   new_addr["state"],
+            "new_zip":     new_addr["zip"],
+            "new_mail_to_fa":     new_mail,
+            "current_mail_to_fa": cur_mail,
+            "current_address":    cur_addr,
         }
 
     elif issue_type == "beneficiary":
-        template = random.choice(BENEFICIARY_NAMES)
-        new_bene = template.format(last=last)
-        issue["narrative"] = (
-            f"I need to update my beneficiary on this account to {new_bene}. "
-            f"Please make this change as soon as possible."
-        )
+        cur_d = client.get("beneficiary") or []
+        new_d = make_designation(random, client["name"])
+        for _ in range(10):
+            if not designation_equal(new_d, cur_d):
+                break
+            new_d = make_designation(random, client["name"])
+        issue["narrative"] = beneficiary_narrative(cur_d, new_d)
         issue["parameters"] = {
-            "new_beneficiary": new_bene,
-            "current_beneficiary": client.get("beneficiary", ""),
+            "new_designation":     new_d,
+            "current_designation": cur_d,
         }
 
     elif issue_type == "holdings":
@@ -206,7 +231,7 @@ def main():
     parser.add_argument("--output", default=OUT_FILE)
     args = parser.parse_args()
 
-    if args.seed:
+    if args.seed is not None:
         random.seed(args.seed)
 
     print("=" * 55)
@@ -219,10 +244,20 @@ def main():
     with open(FUND_FILE) as f:
         fund = json.load(f)
 
-    clients = client_data["clients"]
-    # Weight toward clients with larger positions for realism
-    weights = [max(c["ocrff_account_value"], 1) for c in clients]
-    selected = random.choices(clients, weights=weights, k=args.count)
+    if client_data.get("schema_version") != SCHEMA_VERSION:
+        raise SystemExit("❌ crm_clients.json is not schema v2 yet.\n"
+                         "   Run: python3 migrate_crm_v2.py")
+
+    # Only active accounts with a balance can raise service issues
+    pool = [c for c in client_data["clients"]
+            if c.get("status", "ACTIVE") == "ACTIVE" and c["ocrff_account_value"] > 0]
+    # Weight toward clients with larger positions for realism; no repeats in a run
+    selected = []
+    for _ in range(min(args.count, len(pool))):
+        weights = [c["ocrff_account_value"] for c in pool]
+        pick = random.choices(pool, weights=weights, k=1)[0]
+        selected.append(pick)
+        pool.remove(pick)
 
     issues = []
     print(f"\n📋 Generating {args.count} issues...\n")

@@ -117,8 +117,8 @@ Subject: {email_record['subject']}
 
 FUND CONTEXT (if you want to look it up):
 The Obsidian Capital Research Fund (OCRFF) is an AI-driven equity fund.
-YTD: +{fund['performance']['ytd']['ocrff']}% vs S&P +{fund['performance']['ytd']['sp500']}%
-1-Year: +{fund['performance']['one_year']['ocrff']}% vs S&P +{fund['performance']['one_year']['sp500']}%
+YTD: {fund['performance']['ytd']['ocrff']:+.1f}% vs S&P {fund['performance']['ytd']['sp500']:+.1f}%
+1-Year: {fund['performance']['one_year']['ocrff']:+.1f}% vs S&P {fund['performance']['one_year']['sp500']:+.1f}%
 
 YOUR TASK:
 Decide: is this pitch worth {fa['first_name']}'s time?

@@ -4,7 +4,10 @@ update_prices.py — Neptune Price Updater
 Reads the latest research_latest.json (stocks) and mercury_latest.json (ETFs)
 and refreshes all position prices in neptune_holdings.json.
 
-Price sources (in priority order):
+DEFAULT (--source yfinance): the latest daily close for every holding from yfinance, stored with its real date.
+Pipeline data is only a fallback for tickers yfinance could not return. (--source pipeline restores the old order.)
+
+Old order (--source pipeline), for reference:
   1. prices_1y last line in research_latest.json  (most recent close)
   2. "Current Price:" text in technicals/stock_info fields
   3. yfinance direct call for tickers not in pipeline data
@@ -236,15 +239,43 @@ def fetch_prices_yfinance(tickers):
     return prices
 
 
+def fetch_closes_yfinance(tickers):
+    """
+    Latest daily close for every ticker, WITH the date it belongs to: {ticker: (price, "YYYY-MM-DD")}.
+    Same source as the backtest's prices.csv (unadjusted here: a position is valued at what it trades at).
+    """
+    tickers = sorted(tickers)
+    out = {}
+    if not tickers:
+        return out
+    print(f"\n🌐 yfinance closes for {len(tickers)} tickers")
+    try:
+        import yfinance as yf
+        df = yf.download(tickers, period="10d", auto_adjust=False, progress=False, group_by="column")
+        close = df["Close"] if "Close" in df else df
+        if getattr(close, "ndim", 2) == 1:                      # a single ticker comes back as a Series
+            close = close.to_frame(tickers[0])
+        for t in tickers:
+            if t not in close.columns:
+                continue
+            col = close[t].dropna()
+            if len(col) and float(col.iloc[-1]) > 0:
+                out[t] = (round(float(col.iloc[-1]), 4), col.index[-1].strftime("%Y-%m-%d"))
+    except Exception as e:
+        print(f"   ⚠️  yfinance download failed: {e}")
+    return out
+
+
 # ── Apply prices to holdings ──────────────────────────────────────────────
 
-def update_holdings(holdings, price_map, verbose=False, dry_run=False):
+def update_holdings(holdings, price_map, verbose=False, dry_run=False, price_dates=None, price_sources=None):
     """Apply new prices to all positions and recompute market values."""
     positions = holdings.get("positions", {})
     summary   = holdings.get("summary", {})
     updated   = []
     not_found = []
     run_date  = datetime.now().strftime("%Y-%m-%d")
+    price_dates, price_sources = price_dates or {}, price_sources or {}
 
     for ticker, pos in positions.items():
         if ticker not in price_map:
@@ -272,8 +303,8 @@ def update_holdings(holdings, price_map, verbose=False, dry_run=False):
             pos["market_value"]  = new_market_value
             pos["gain_loss"]     = new_gain_loss
             pos["gain_loss_pct"] = new_gl_pct
-            pos["price_date"]    = run_date
-            pos["price_source"]  = "pipeline_json"
+            pos["price_date"]    = price_dates.get(ticker, run_date)
+            pos["price_source"]  = price_sources.get(ticker, "pipeline_json")
 
         updated.append(ticker)
 
@@ -300,8 +331,10 @@ def update_holdings(holdings, price_map, verbose=False, dry_run=False):
             "total_gain_loss":       total_gl,
             "total_gain_loss_pct":   gl_pct,
         })
-        holdings["last_updated"] = run_date
-        holdings["price_source"] = "pipeline_json"
+        dates = [d for t, d in price_dates.items() if t in price_map]
+        holdings["last_updated"] = max(dates) if dates else run_date      # the date the prices are actually from
+        holdings["price_source"] = ("yfinance_close" if price_sources and all(v == "yfinance_close" for v in price_sources.values())
+                                    else "mixed" if price_sources else "pipeline_json")
 
     return updated, not_found
 
@@ -314,6 +347,9 @@ def main():
                         help="Preview price changes without saving")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Show every price update")
+    parser.add_argument("--source", choices=["yfinance", "pipeline"], default="yfinance",
+                        help="yfinance (default): latest close for every holding, dated. "
+                             "pipeline: last price in research_latest.json / mercury_latest.json (only as fresh as the last pipeline run)")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -327,23 +363,38 @@ def main():
     if not holdings:
         sys.exit(1)
 
-    research_data = load_json(RESEARCH_FILE, "research_latest.json")
-    mercury_data  = load_json(MERCURY_FILE,  "mercury_latest.json")
-
-    print(f"\n📊 Building price map...")
-    stock_prices = extract_stock_prices(research_data)
-    etf_prices   = extract_etf_prices(mercury_data)
-    price_map    = {**stock_prices, **etf_prices}
-
-    print(f"   Pipeline prices  : {len(price_map)}")
-
-    # yfinance fallback for any held tickers not in pipeline data
     positions = holdings.get("positions", {})
-    missing   = set(positions.keys()) - set(price_map.keys())
-    if missing:
-        yf_prices = fetch_prices_yfinance(missing)
-        price_map.update(yf_prices)
-        print(f"   yfinance prices  : {len(yf_prices)}")
+    price_map, price_dates, price_sources = {}, {}, {}
+
+    if args.source == "yfinance":
+        got = fetch_closes_yfinance(positions.keys())
+        for t, (px, d) in got.items():
+            price_map[t], price_dates[t], price_sources[t] = px, d, "yfinance_close"
+        print(f"   yfinance closes  : {len(got)}")
+        if got:
+            newest = max(price_dates.values())
+            stale = sorted(t for t, d in price_dates.items() if d != newest)
+            print(f"   latest close     : {newest}" + (f"   (older: {', '.join(stale)})" if stale else ""))
+
+    # pipeline data: the whole source with --source pipeline, otherwise only a fallback for what yfinance missed
+    if args.source == "pipeline" or len(price_map) < len(positions):
+        research_data = load_json(RESEARCH_FILE, "research_latest.json")
+        mercury_data  = load_json(MERCURY_FILE,  "mercury_latest.json")
+        print(f"\n📊 Pipeline prices (date not recorded in the data; may be older than today)...")
+        pipe = {**extract_stock_prices(research_data), **extract_etf_prices(mercury_data)}
+        used = 0
+        for t, px in pipe.items():
+            if t in positions and t not in price_map:
+                price_map[t], price_sources[t] = px, "pipeline_json"
+                used += 1
+        print(f"   Pipeline prices  : {used}")
+        if args.source == "yfinance" and used:
+            print("   ⚠️  these came from the pipeline, not yfinance — their dates are unverified")
+        if args.source == "pipeline":
+            missing = set(positions) - set(price_map)
+            if missing:
+                for t, (px, d) in fetch_closes_yfinance(missing).items():
+                    price_map[t], price_dates[t], price_sources[t] = px, d, "yfinance_close"
 
     print(f"   Total prices     : {len(price_map)}")
 
@@ -357,7 +408,8 @@ def main():
         print(f"{'─'*60}")
 
     updated, not_found = update_holdings(
-        holdings, price_map, verbose=args.verbose, dry_run=args.dry_run
+        holdings, price_map, verbose=args.verbose, dry_run=args.dry_run,
+        price_dates=price_dates, price_sources=price_sources
     )
 
     print(f"\n✅ Prices updated : {len(updated)}")
@@ -369,6 +421,12 @@ def main():
         with open(HOLDINGS_FILE, "w") as f:
             json.dump(holdings, f, indent=2)
         print(f"\n💾 Saved: {HOLDINGS_FILE}")
+        try:
+            import nav_engine
+            print("\n📈 Floating NAV:")
+            nav_engine.refresh(apply=True, source="update_prices")
+        except Exception as e:                       # never lose a price update over the NAV step
+            print(f"⚠️  NAV not recalculated: {e}   (run: python3 nav_engine.py --apply)")
 
     s = holdings["summary"]
     print(f"\n{'─'*60}")

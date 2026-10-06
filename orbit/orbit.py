@@ -12,7 +12,7 @@ Usage:
     python3 orbit.py --verbose
 """
 
-import json, os, sys, subprocess, glob, argparse
+import json, os, re, sys, subprocess, glob, argparse
 from datetime import datetime, date
 
 SCRIPT_DIR    = os.path.dirname(os.path.abspath(__file__))
@@ -30,9 +30,14 @@ os.makedirs(OUTBOX_DIR, exist_ok=True)
 os.makedirs(STATEMENTS_DIR, exist_ok=True)
 
 sys.path.insert(0, SCRIPT_DIR)
+sys.path.insert(0, PAPER_DIR)
+import nav_engine
 from trade_engine import (execute_ocrff_buy, execute_ocrff_sell,
                            neptune_rebalance_for_cash, load_holdings,
                            CASH_FLOOR_PCT)
+from crm_schema import (SCHEMA_VERSION, make_pending, format_address,
+                        format_designation, primary_names)
+import form_flow
 
 
 def load_json(path):
@@ -101,6 +106,20 @@ def add_client_transaction(account_id, txn):
     save_json(CLIENTS_FILE, data)
 
 
+def set_pending_change(account_id, kind, pending):
+    """Store a pending change keyed by kind ('address' / 'beneficiary').
+    A newer request of the same kind replaces the older one; the other kind is untouched."""
+    data = load_json(CLIENTS_FILE)
+    replaced = None
+    for c in data["clients"]:
+        if c["account_id"] == account_id:
+            replaced = c.setdefault("pending_changes", {}).get(kind)
+            c["pending_changes"][kind] = pending
+            break
+    save_json(CLIENTS_FILE, data)
+    return replaced
+
+
 # ── Statement Generator ────────────────────────────────────────────────────
 
 def generate_statement(client, fund, holdings):
@@ -114,6 +133,12 @@ def generate_statement(client, fund, holdings):
     acct_val = client["ocrff_account_value"]
     shares   = client["ocrff_shares"]
     today    = date.today().strftime("%B %d, %Y")
+
+    # Where the statement is mailed (honors mail_to_fa)
+    if client.get("mail_to_fa"):
+        mailing = f"Mailed c/o {client['fa_name']}, {client['firm']}"
+    else:
+        mailing = f"Mailed to {format_address(client.get('address'))}"
 
     # Recent transactions HTML
     txn_rows = ""
@@ -250,6 +275,7 @@ def generate_statement(client, fund, holdings):
     <div>
       <div class="client-name">{client['name']}</div>
       <div class="client-acct">Account: {client['account_id']}</div>
+      <div class="client-acct">{mailing}</div>
     </div>
     <div class="client-fa">
       <strong>{client['fa_name']}</strong>
@@ -320,8 +346,8 @@ def generate_statement(client, fund, holdings):
   </div>
 
   <div class="stmt-footer">
-    <span>⚫ Obsidian Capital Research Fund · OC-CLIENT-001</span>
-    <span>Beneficiary: {client.get('beneficiary','—')}</span>
+    <span>⚫ Obsidian Capital Research Fund · {client['account_id']}</span>
+    <span>Primary beneficiary: {primary_names(client.get('beneficiary'))}</span>
     <span>FA: {client['fa_name']} · {client['firm']}</span>
   </div>
 
@@ -419,10 +445,14 @@ Write a brief, warm confirmation (3-4 sentences). Sign as: — Orbit | Obsidian 
                     new_shares = round(max(0, client["ocrff_shares"] - txn["shares"]), 6)
                     new_value  = round(new_shares * nav, 2)
 
-                update_client_record(issue["account_id"], {
+                updates = {
                     "ocrff_shares": new_shares,
                     "ocrff_account_value": new_value,
-                })
+                }
+                if is_close:
+                    updates["status"] = "CLOSED"
+                    updates["closed_date"] = date.today().isoformat()
+                update_client_record(issue["account_id"], updates)
                 add_client_transaction(issue["account_id"], txn)
 
                 # Neptune escalation if cash floor breached
@@ -489,8 +519,21 @@ YTD performance vs S&P). Sign as: — Orbit | Obsidian Capital Client Services""
 
 def handle_address_change(issue, dry_run=False, verbose=False):
     params = issue["parameters"]
-    new_addr = (f"{params['new_street']}, {params['new_city']}, "
-                f"{params['new_state']} {params['new_zip']}")
+    client = get_client_record(issue["account_id"]) or {}
+    requested = {
+        "street": params["new_street"],
+        "unit":   params.get("new_unit", ""),
+        "city":   params["new_city"],
+        "state":  params.get("new_state", "CA"),
+        "zip":    params["new_zip"],
+        "mail_to_fa": bool(params.get("new_mail_to_fa", client.get("mail_to_fa", False))),
+    }
+    new_addr = format_address(requested)
+    mail_note = ""
+    if requested["mail_to_fa"] != bool(client.get("mail_to_fa", False)):
+        mail_note = ("\nThe client also wants statements mailed "
+                     + ("to their advisor's office." if requested["mail_to_fa"]
+                        else "directly to them (not their advisor)."))
 
     prompt = f"""You are Orbit, a warm but compliance-aware customer service rep 
 at Obsidian Capital.
@@ -498,43 +541,57 @@ at Obsidian Capital.
 Client: {issue['client_name']} (Account: {issue['account_id']})
 Request: "{issue['narrative']}"
 
-POLICY: Address changes require written authorization before they can be processed.
+POLICY: Address changes require a signed address-change form before they can be processed.
 You cannot confirm the change is complete. You must:
 1. Acknowledge their request warmly
-2. Explain that written authorization is required (a form will be sent to their FA)
-3. Give them a timeline (typically 3-5 business days after authorization received)
+2. Explain that a signed address-change form is required (it will be sent to their FA)
+3. Give them a timeline (typically 3-5 business days after the signed form is received)
 4. Reassure them the request has been logged
 
-New address requested: {new_addr}
+New address requested: {new_addr}{mail_note}
 
 Write a professional, warm 3-4 sentence response.
 Sign as: — Orbit | Obsidian Capital Client Services"""
 
     response = call_orbit_llm(prompt, verbose)
 
+    replaced = None
+    request_id = None
     if not dry_run:
-        # Flag as pending — do not directly update
-        update_client_record(issue["account_id"], {
-            "new_street":  params["new_street"],
-            "new_city":    params["new_city"],
-            "new_state":   params["new_state"],
-            "new_zip":     params["new_zip"],
-            "requested_at": datetime.now().isoformat(),
-        }, pending=True)
+        # Flag as pending — the CRM is only changed after a valid signed form is reviewed
+        pending = make_pending(issue["account_id"], "address", requested,
+                               issue_id=issue["issue_id"])
+        request_id = pending["request_id"]
+        replaced = set_pending_change(issue["account_id"], "address", pending)
+        if replaced and verbose:
+            print(f"  ↺ Replaced earlier pending address request {replaced.get('request_id')}")
 
     return {
         "issue_id": issue["issue_id"],
         "type": "address",
         "orbit_response": response,
         "pending": True,
+        "request_id": request_id,
         "change_requested": new_addr,
+        "replaced_pending": (replaced or {}).get("request_id"),
     }
+
+
+def _designation_from_params(params):
+    """New issue files carry a full designation list; old ones a single name."""
+    if params.get("new_designation"):
+        return params["new_designation"]
+    name = params.get("new_beneficiary", "")
+    rel = "Trust" if re.search(r"\btrust\b", name, re.I) else "Other"
+    return [{"name": name, "relationship": rel, "type": "primary", "percent": 100}]
 
 
 def handle_beneficiary_change(issue, dry_run=False, verbose=False):
     params  = issue["parameters"]
-    new_b   = params["new_beneficiary"]
-    curr_b  = params.get("current_beneficiary", "")
+    new_d   = _designation_from_params(params)
+    curr_d  = params.get("current_designation") or params.get("current_beneficiary") or []
+    new_txt  = format_designation(new_d)
+    curr_txt = format_designation(curr_d) if curr_d else "Not on file"
 
     prompt = f"""You are Orbit, a warm but compliance-aware customer service rep 
 at Obsidian Capital.
@@ -543,31 +600,39 @@ Client: {issue['client_name']} (Account: {issue['account_id']})
 Request: "{issue['narrative']}"
 
 POLICY: Beneficiary changes are sensitive and require:
-1. A signed beneficiary change form (cannot be done verbally or by email alone)
+1. A signed AND notarized beneficiary designation form (cannot be done verbally or by email alone)
 2. The form must be submitted through their financial advisor
-3. Changes typically take 5-7 business days after receipt of signed form
+3. Changes typically take 5-7 business days after receipt of the completed form
+4. Percentages for primary beneficiaries must total 100%, and so must contingent beneficiaries
 
-Current beneficiary on file: {curr_b or 'Not on file'}
-Requested new beneficiary: {new_b}
+Current designation on file: {curr_txt}
+Requested designation: {new_txt}
 
 Write a warm, professional 3-4 sentence response. Acknowledge the request, 
-explain the process clearly, and offer to coordinate with their FA ({issue['fa_name']}).
+explain the process clearly (including the notary requirement), and offer to 
+coordinate with their FA ({issue['fa_name']}).
 Sign as: — Orbit | Obsidian Capital Client Services"""
 
     response = call_orbit_llm(prompt, verbose)
 
+    replaced = None
+    request_id = None
     if not dry_run:
-        update_client_record(issue["account_id"], {
-            "new_beneficiary": new_b,
-            "requested_at": datetime.now().isoformat(),
-        }, pending=True)
+        pending = make_pending(issue["account_id"], "beneficiary", new_d,
+                               issue_id=issue["issue_id"])
+        request_id = pending["request_id"]
+        replaced = set_pending_change(issue["account_id"], "beneficiary", pending)
+        if replaced and verbose:
+            print(f"  ↺ Replaced earlier pending beneficiary request {replaced.get('request_id')}")
 
     return {
         "issue_id": issue["issue_id"],
         "type": "beneficiary",
         "orbit_response": response,
         "pending": True,
-        "change_requested": new_b,
+        "request_id": request_id,
+        "change_requested": new_txt,
+        "replaced_pending": (replaced or {}).get("request_id"),
     }
 
 
@@ -675,6 +740,20 @@ def main():
     parser.add_argument("--issues", default=ISSUES_FILE)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verbose", "-v", action="store_true")
+    parser.add_argument("--forms", choices=["live", "mock", "off"], default="live",
+                        help="Paperwork loop for pending address/beneficiary requests: "
+                             "live = form_agent image model + Orbit vision review; mock = offline "
+                             "Python-drawn forms and a manifest reader (free, for testing); off = skip")
+    parser.add_argument("--process-new", action="store_true",
+                        help="Also process forms for requests created in THIS run (default: they wait for the next run)")
+    parser.add_argument("--max-images", type=int, default=None,
+                        help="Max new form images this run (default 10, or ORBIT_MAX_IMAGES)")
+    parser.add_argument("--reprocess", action="store_true",
+                        help="Run issues even if their issue_id was already processed in an earlier run "
+                             "(default: skip them, so re-running the same issues file cannot repeat orders)")
+    parser.add_argument("--defect-rate", type=float, default=None,
+                        help="Chance a generated form gets a deliberately planted defect (default 0.20, or "
+                             "ORBIT_DEFECT_RATE). Use 0 to see only the image model's natural mistakes")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -683,12 +762,69 @@ def main():
     if args.dry_run: print("    *** DRY RUN ***")
     print("=" * 60)
 
+    crm_meta = load_json(CLIENTS_FILE)
+    if crm_meta.get("schema_version") != SCHEMA_VERSION:
+        sys.exit("❌ crm_clients.json is not schema v2 yet.\n"
+                 "   Run: python3 migrate_crm_v2.py")
+    del crm_meta
+
     data   = load_json(args.issues)
+    # Floating NAV: portfolio value / client shares. Recalculated at the start of every run so orders
+    # and statements use today's NAV, and client account values match it.
+    if args.dry_run:
+        _n = nav_engine.refresh(apply=False)
+        print(f"NAV (dry run, not saved): ${_n['nav']:,.4f} = portfolio ${_n['portfolio_value']:,.2f} / {_n['shares']:,.4f} shares")
+    else:
+        nav_engine.refresh(apply=True, source="orbit")
     fund   = load_json(FUND_FILE)
     issues = data["issues"]
     nav    = fund["current_nav"]
 
+    if not args.reprocess:
+        done = set()
+        for rf in glob.glob(os.path.join(OUTBOX_DIR, "orbit_run_*.json")):
+            try:
+                for r in load_json(rf).get("results", []):
+                    if r.get("issue_id") and not r.get("error"):
+                        done.add(r["issue_id"])
+            except Exception:
+                continue
+        repeats = [i for i in issues if i["issue_id"] in done]
+        if repeats:
+            print(f"⏭  Skipping {len(repeats)} issue(s) already processed in an earlier run "
+                  f"(use --reprocess to run them again)")
+            issues = [i for i in issues if i["issue_id"] not in done]
+
     print(f"\n📋 Issues loaded: {len(issues)} | NAV: ${nav:.2f}\n")
+
+    llm = lambda p: call_orbit_llm(p, args.verbose)
+    form_results, form_summary = [], None
+
+    def run_forms(only_ids=None, title="📎 Paperwork: pending forms"):
+        """Generate → review → apply/return for pending address/beneficiary requests."""
+        if args.forms == "off":
+            return [], None
+        if args.dry_run:
+            items, _ = form_flow.find_work(CLIENTS_FILE, only_ids)
+            print(f"{title}: {len(items)} request(s) waiting (dry run — nothing generated)\n")
+            return [], None
+        if args.forms == "live":
+            ok, why = form_flow.live_ready()
+            if not ok:
+                print(f"{title}: skipped — {why}\n   (fix the key, or use --forms mock)\n")
+                return [], None
+        items, _ = form_flow.find_work(CLIENTS_FILE, only_ids)
+        print(f"{'─'*60}\n{title} — {len(items)} request(s) [{args.forms}]\n")
+        r, sm = form_flow.process_forms(CLIENTS_FILE, llm, args.forms, args.max_images,
+                                        only_ids, verbose=args.verbose, defect_rate=args.defect_rate)
+        print(f"\n  Forms: {sm['applied']} approved | {sm['returned']} returned | {sm['errors']} errors | "
+              f"{sm['deferred']} deferred | {sm['images']} image(s), ${sm['image_cost']:.3f} + review ${sm['review_cost']:.3f}")
+        if sm["injected"] or sm["extra_findings"]:
+            print(f"  Review check: {sm['detected']}/{sm['injected']} planted defects caught | "
+                  f"{sm['extra_findings']} unplanted flaw(s) found\n")
+        return r, sm
+
+    form_results, form_summary = run_forms()
 
     results = []
     for i, issue in enumerate(issues):
@@ -739,14 +875,30 @@ def main():
             import traceback; traceback.print_exc()
             results.append({"issue_id": issue["issue_id"], "error": str(e)})
 
+    # Forms for requests that were just created in this run (optional)
+    if args.process_new and not args.dry_run:
+        new_ids = {r["request_id"] for r in results if r.get("request_id")}
+        if new_ids:
+            r2, s2 = run_forms(new_ids, "📎 Paperwork: forms for requests made this run")
+            form_results += r2
+            if s2:
+                if form_summary is None:
+                    form_summary = s2
+                else:
+                    for k, v in s2.items():
+                        form_summary[k] = form_summary.get(k, 0) + v
+
     # Save run record
     if not args.dry_run:
-        ts = datetime.now().strftime("%Y%m%d_%H%M")
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         out_file = os.path.join(OUTBOX_DIR, f"orbit_run_{ts}.json")
         save_json(out_file, {
             "run_date": datetime.now().isoformat(),
             "nav": nav, "count": len(results),
             "results": results,
+            "form_mode": args.forms,
+            "form_summary": form_summary,
+            "form_results": form_results,
         })
         print(f"\n💾 Run saved: {out_file}")
 

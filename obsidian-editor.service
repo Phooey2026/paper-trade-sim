@@ -1,0 +1,18 @@
+[Unit]
+Description=Obsidian Capital JSON Editor
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=jay
+WorkingDirectory=/home/jay/paper_trade
+ExecStart=/usr/bin/python3 /home/jay/paper_trade/editor_server.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=obsidian-editor
+
+[Install]
+WantedBy=multi-user.target

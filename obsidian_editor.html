@@ -1,0 +1,1183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>⚫ Obsidian Capital — Data Editor</title>
+<style>
+:root {
+  --bg:      #0d1117; --bg2: #161b22; --bg3: #1c2128; --bg4: #21262d;
+  --border:  #30363d; --border2: #21262d;
+  --text:    #e6edf3; --muted: #7d8590; --muted2: #484f58;
+  --blue:    #58a6ff; --blue-dim: #1f6feb;
+  --green:   #3fb950; --green-dim: #1a4731;
+  --red:     #f85149; --red-dim:   #3d1a1a;
+  --gold:    #e3b341; --purple: #bc8cff; --venus: #f778ba;
+  --radius:  6px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'SF Mono','Cascadia Code','Fira Code',monospace;
+       background: var(--bg); color: var(--text); font-size: 13px; height: 100vh;
+       display: flex; flex-direction: column; overflow: hidden; }
+
+/* ── Header ── */
+.header { background: var(--bg2); border-bottom: 1px solid var(--border);
+           padding: 12px 20px; display: flex; align-items: center;
+           justify-content: space-between; flex-shrink: 0; }
+.header-left { display: flex; align-items: center; gap: 12px; }
+.logo { font-size: 20px; }
+.header-title { font-size: 16px; font-weight: 700; color: var(--blue); }
+.header-sub { font-size: 11px; color: var(--muted); }
+.status-dot { width: 8px; height: 8px; border-radius: 50%;
+              background: var(--green); display: inline-block; margin-right: 6px; }
+.status-dot.red { background: var(--red); }
+#status-text { font-size: 11px; color: var(--muted); }
+
+/* ── Tabs ── */
+.tabs { display: flex; border-bottom: 1px solid var(--border);
+        padding: 0 20px; background: var(--bg2); flex-shrink: 0; }
+.tab { padding: 9px 18px; font-size: 12px; font-weight: 600; color: var(--muted);
+       cursor: pointer; border-bottom: 2px solid transparent;
+       text-transform: uppercase; letter-spacing: 0.06em;
+       background: none; border-top: none; border-left: none; border-right: none;
+       font-family: inherit; transition: all 0.15s; }
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+/* ── Layout ── */
+.workspace { display: flex; flex: 1; overflow: hidden; }
+.list-pane { width: 420px; min-width: 300px; border-right: 1px solid var(--border);
+              display: flex; flex-direction: column; flex-shrink: 0; }
+.detail-pane { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.panel { display: none; width: 100%; height: 100%; }
+.panel.active { display: flex; }
+
+/* ── Toolbar ── */
+.toolbar { padding: 10px 14px; border-bottom: 1px solid var(--border2);
+           display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+           background: var(--bg2); flex-shrink: 0; }
+.search-input { flex: 1; min-width: 140px; background: var(--bg3);
+                border: 1px solid var(--border); border-radius: var(--radius);
+                color: var(--text); padding: 6px 10px; font-family: inherit;
+                font-size: 12px; outline: none; }
+.search-input:focus { border-color: var(--blue); }
+select.filter { background: var(--bg3); border: 1px solid var(--border);
+                border-radius: var(--radius); color: var(--text);
+                padding: 6px 8px; font-family: inherit; font-size: 12px;
+                outline: none; cursor: pointer; }
+.btn { padding: 6px 14px; border-radius: var(--radius); font-size: 11px;
+       font-weight: 600; cursor: pointer; font-family: inherit;
+       letter-spacing: 0.04em; border: 1px solid var(--border);
+       background: var(--bg3); color: var(--muted); transition: all 0.15s; }
+.btn:hover { color: var(--text); border-color: var(--blue); }
+.btn-primary { background: var(--blue-dim); color: var(--blue); border-color: var(--blue); }
+.btn-primary:hover { background: var(--blue); color: #000; }
+.btn-success { background: var(--green-dim); color: var(--green); border-color: var(--green); }
+.btn-success:hover { background: var(--green); color: #000; }
+.btn-danger { color: var(--red); }
+.btn-danger:hover { background: var(--red-dim); border-color: var(--red); color: var(--red); }
+.btn-gold { color: var(--gold); border-color: var(--gold); }
+.btn-gold:hover { background: #3d2e00; }
+.count-badge { font-size: 11px; color: var(--muted); margin-left: 4px; }
+
+/* ── List ── */
+.list-scroll { flex: 1; overflow-y: auto; }
+.list-item { padding: 10px 14px; border-bottom: 1px solid var(--border2);
+              cursor: pointer; transition: background 0.1s; }
+.list-item:hover { background: var(--bg3); }
+.list-item.selected { background: var(--bg4); border-left: 2px solid var(--blue); }
+.item-title { font-weight: 600; font-size: 13px; color: var(--text); }
+.item-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.item-badges { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
+.badge { display: inline-block; padding: 1px 7px; border-radius: 10px;
+         font-size: 10px; font-weight: 600; }
+.badge-client  { background: #1a3a1a; color: var(--green); }
+.badge-prospect{ background: #1a2a3a; color: var(--blue); }
+.badge-equity  { background: #1a2040; color: var(--blue); }
+.badge-etf     { background: #3d2a00; color: var(--gold); }
+.badge-t1 { background: #2a1a3a; color: var(--purple); }
+.badge-t2 { background: #1a2a3a; color: var(--blue); }
+.badge-t3 { background: #1a3a2a; color: #4ade80; }
+.pos { color: var(--green); } .neg { color: var(--red); }
+
+/* ── Detail pane ── */
+.detail-scroll { flex: 1; overflow-y: auto; padding: 20px; }
+.detail-empty { display: flex; align-items: center; justify-content: center;
+                height: 100%; flex-direction: column; gap: 12px; color: var(--muted); }
+.detail-empty .icon { font-size: 36px; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+.form-group { display: flex; flex-direction: column; gap: 4px; }
+.form-group.full { grid-column: 1 / -1; }
+label { font-size: 10px; color: var(--muted); text-transform: uppercase;
+        letter-spacing: 0.07em; }
+input[type=text], input[type=number], input[type=email], textarea, select.form-select {
+  background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text); padding: 7px 10px; font-family: inherit; font-size: 12px;
+  outline: none; width: 100%; }
+input:focus, textarea:focus, select.form-select:focus { border-color: var(--blue); }
+textarea { resize: vertical; min-height: 60px; }
+.section-title { font-size: 11px; font-weight: 700; color: var(--muted);
+                 text-transform: uppercase; letter-spacing: 0.08em;
+                 padding: 14px 0 8px; border-top: 1px solid var(--border2);
+                 margin-top: 8px; grid-column: 1 / -1; }
+.section-title:first-child { border-top: none; padding-top: 0; }
+.detail-actions { padding: 12px 20px; border-top: 1px solid var(--border);
+                  display: flex; gap: 8px; background: var(--bg2); flex-shrink: 0; }
+.toast { position: fixed; bottom: 20px; right: 20px; background: var(--bg2);
+         border: 1px solid var(--border); border-radius: var(--radius);
+         padding: 10px 16px; font-size: 12px; z-index: 999;
+         display: none; animation: slideIn 0.2s ease; }
+.toast.show { display: block; }
+.toast.ok  { border-color: var(--green); color: var(--green); }
+.toast.err { border-color: var(--red);   color: var(--red); }
+@keyframes slideIn { from { transform: translateY(10px); opacity: 0; }
+                     to   { transform: translateY(0);    opacity: 1; } }
+
+/* ── Holdings summary cards ── */
+.summary-cards { display: grid; grid-template-columns: repeat(4, 1fr);
+                 gap: 10px; margin-bottom: 16px; }
+.sum-card { background: var(--bg2); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 12px; }
+.sum-card .lbl { font-size: 10px; color: var(--muted); text-transform: uppercase;
+                 letter-spacing: 0.07em; }
+.sum-card .val { font-size: 18px; font-weight: 700; margin-top: 4px; }
+
+/* ── Confirm modal ── */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+                 display: none; align-items: center; justify-content: center; z-index: 1000; }
+.modal-overlay.show { display: flex; }
+.modal { background: var(--bg2); border: 1px solid var(--border);
+         border-radius: 8px; padding: 24px; min-width: 320px; max-width: 440px; }
+.modal h3 { margin-bottom: 10px; font-size: 15px; }
+.modal p  { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+.modal-btns { display: flex; gap: 8px; justify-content: flex-end; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <span class="logo">⚫</span>
+    <div>
+      <div class="header-title">Obsidian Capital — Data Editor</div>
+      <div class="header-sub">FA Profiles · Client Accounts · Neptune Holdings</div>
+    </div>
+  </div>
+  <div>
+    <span class="status-dot" id="status-dot"></span>
+    <span id="status-text">Connecting...</span>
+  </div>
+</div>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('fa')">👤 FA Profiles</button>
+  <button class="tab" onclick="switchTab('clients')">👥 Clients</button>
+  <button class="tab" onclick="switchTab('holdings')">📊 Holdings</button>
+</div>
+
+<!-- ══════════════════ FA TAB ══════════════════ -->
+<div class="workspace">
+<div id="tab-fa" class="panel active">
+  <div class="list-pane">
+    <div class="toolbar">
+      <input class="search-input" id="fa-search" placeholder="Search name or firm..." oninput="filterFAs()">
+      <select class="filter" id="fa-territory" onchange="filterFAs()">
+        <option value="">All Territories</option>
+        <option>San Diego</option><option>Orange County</option>
+        <option>Los Angeles</option><option>San Francisco</option>
+      </select>
+      <select class="filter" id="fa-status" onchange="filterFAs()">
+        <option value="">All Status</option>
+        <option>CLIENT</option><option>PROSPECT</option>
+      </select>
+      <select class="filter" id="fa-tier" onchange="filterFAs()">
+        <option value="">All Tiers</option>
+        <option value="1">Tier 1</option><option value="2">Tier 2</option><option value="3">Tier 3</option>
+      </select>
+    </div>
+    <div class="toolbar" style="padding-top:0; border-top:none;">
+      <button class="btn btn-primary" onclick="newFA()">+ New FA</button>
+      <span class="count-badge" id="fa-count"></span>
+    </div>
+    <div class="list-scroll" id="fa-list"></div>
+  </div>
+  <div class="detail-pane">
+    <div class="detail-scroll" id="fa-detail">
+      <div class="detail-empty"><div class="icon">👤</div><div>Select an FA to edit</div></div>
+    </div>
+    <div class="detail-actions" id="fa-actions" style="display:none">
+      <button class="btn btn-success" onclick="saveFA()">💾 Save Changes</button>
+      <button class="btn btn-danger"  onclick="deleteFA()">🗑 Delete FA</button>
+      <button class="btn" onclick="clearFADetail()">✕ Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════ CLIENTS TAB ══════════════════ -->
+<div id="tab-clients" class="panel">
+  <div class="list-pane">
+    <div class="toolbar">
+      <input class="search-input" id="cl-search" placeholder="Search client name..." oninput="filterClients()">
+      <select class="filter" id="cl-fa" onchange="filterClients()">
+        <option value="">All FAs</option>
+      </select>
+      <select class="filter" id="cl-territory" onchange="filterClients()">
+        <option value="">All Territories</option>
+        <option>San Diego</option><option>Orange County</option>
+        <option>Los Angeles</option><option>San Francisco</option>
+      </select>
+    </div>
+    <div class="toolbar" style="padding-top:0; border-top:none;">
+      <button class="btn btn-primary" onclick="newClient()">+ New Client</button>
+      <span class="count-badge" id="cl-count"></span>
+    </div>
+    <div class="list-scroll" id="cl-list"></div>
+  </div>
+  <div class="detail-pane">
+    <div class="detail-scroll" id="cl-detail">
+      <div class="detail-empty"><div class="icon">👥</div><div>Select a client to edit</div></div>
+    </div>
+    <div class="detail-actions" id="cl-actions" style="display:none">
+      <button class="btn btn-success" onclick="saveClient()">💾 Save Changes</button>
+      <button class="btn btn-danger"  onclick="deleteClient()">🗑 Delete Client</button>
+      <button class="btn" onclick="clearClientDetail()">✕ Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════ HOLDINGS TAB ══════════════════ -->
+<div id="tab-holdings" class="panel">
+  <div class="list-pane">
+    <div class="toolbar">
+      <input class="search-input" id="h-search" placeholder="Search ticker or company..." oninput="filterHoldings()">
+      <select class="filter" id="h-type" onchange="filterHoldings()">
+        <option value="">All Types</option>
+        <option value="equity">Equity</option><option value="etf">ETF</option>
+      </select>
+      <button class="btn btn-primary" onclick="newHolding()">+ New Position</button>
+    </div>
+    <div class="toolbar" style="padding-top:0; border-top:none;">
+      <button class="btn btn-gold" onclick="refreshPrices()">🔄 Refresh Prices</button>
+      <span class="count-badge" id="h-count"></span>
+    </div>
+    <div class="list-scroll" id="h-list"></div>
+  </div>
+  <div class="detail-pane">
+    <div class="detail-scroll" id="h-detail">
+      <div id="h-summary" style="margin-bottom:16px"></div>
+      <div class="detail-empty"><div class="icon">📊</div><div>Select a position to edit</div></div>
+    </div>
+    <div class="detail-actions" id="h-actions" style="display:none">
+      <button class="btn btn-success" onclick="saveHolding()">💾 Save Position</button>
+      <button class="btn btn-danger"  onclick="deleteHolding()">🗑 Remove Position</button>
+      <button class="btn" onclick="clearHoldingDetail()">✕ Cancel</button>
+    </div>
+  </div>
+</div>
+</div><!-- end workspace -->
+
+<!-- Confirm modal -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <h3 id="modal-title">Confirm</h3>
+    <p id="modal-msg"></p>
+    <div class="modal-btns">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-danger" id="modal-confirm">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+const API = 'http://localhost:8765';
+let faData = null, clientData = null, holdingsData = null;
+let selectedFA = null, selectedClient = null, selectedTicker = null;
+let faOriginal = null, clientOriginal = null;   // snapshot at select time, for change detection
+let filteredFAs = [], filteredClients = [], filteredHoldings = [];
+
+// ── Utilities ──────────────────────────────────────────────────────────────
+function toast(msg, ok=true) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (ok ? 'ok' : 'err');
+  setTimeout(() => t.className = 'toast', 3000);
+}
+
+function fmt(v) {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'number') return v.toLocaleString('en-US', {maximumFractionDigits: 2});
+  return v;
+}
+function fmtMoney(v) {
+  return '$' + Number(v || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+function fmtPct(v) {
+  const n = Number(v || 0);
+  return (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+}
+
+function esc(v) {
+  return String(v ?? '').replace(/&/g,'&amp;').replace(/"/g,'&quot;')
+                        .replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+const clone = o => JSON.parse(JSON.stringify(o));
+const same  = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+// Only the fields the user actually edited are applied onto a freshly loaded copy,
+// so saving here can't overwrite changes Orbit/Venus made while the editor was open.
+function changedFields(updated, original) {
+  const out = {};
+  Object.keys(updated).forEach(k => {
+    if (!original || !same(updated[k], original[k])) out[k] = updated[k];
+  });
+  return out;
+}
+
+function modal(title, msg, onConfirm) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-msg').textContent = msg;
+  document.getElementById('modal-confirm').onclick = () => { closeModal(); onConfirm(); };
+  document.getElementById('modal').classList.add('show');
+}
+function closeModal() { document.getElementById('modal').classList.remove('show'); }
+
+// ── API calls ──────────────────────────────────────────────────────────────
+async function apiGet(key) {
+  const r = await fetch(`${API}/api/${key}`);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+async function apiPost(key, data) {
+  const r = await fetch(`${API}/api/${key}`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(data)
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+// ── Status ─────────────────────────────────────────────────────────────────
+async function checkStatus() {
+  try {
+    const s = await apiGet('status');
+    document.getElementById('status-dot').className = 'status-dot';
+    document.getElementById('status-text').textContent = `Connected · ${s.user}@jetson`;
+  } catch {
+    document.getElementById('status-dot').className = 'status-dot red';
+    document.getElementById('status-text').textContent = 'Server offline';
+  }
+}
+
+// ── Tab switching ──────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    t.classList.toggle('active', ['fa','clients','holdings'][i] === name);
+  });
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + (name === 'clients' ? 'clients' : name === 'holdings' ? 'holdings' : 'fa')).classList.add('active');
+  if (name === 'fa' && !faData) loadFAs();
+  if (name === 'clients' && !clientData) loadClients();
+  if (name === 'holdings' && !holdingsData) loadHoldings();
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// FA TAB
+// ══════════════════════════════════════════════════════════════════════════
+async function loadFAs() {
+  try {
+    faData = await apiGet('advisors');
+    filterFAs();
+  } catch(e) { toast('Failed to load FAs: ' + e.message, false); }
+}
+
+function filterFAs() {
+  if (!faData) return;
+  const q    = document.getElementById('fa-search').value.toLowerCase();
+  const terr = document.getElementById('fa-territory').value;
+  const stat = document.getElementById('fa-status').value;
+  const tier = document.getElementById('fa-tier').value;
+
+  filteredFAs = faData.advisors.filter(fa => {
+    if (q && !fa.name.toLowerCase().includes(q) && !fa.firm.toLowerCase().includes(q)) return false;
+    if (terr && fa.territory !== terr) return false;
+    if (stat && fa.status !== stat) return false;
+    if (tier && String(fa.tier) !== tier) return false;
+    return true;
+  });
+
+  document.getElementById('fa-count').textContent = `${filteredFAs.length} of ${faData.advisors.length}`;
+  renderFAList();
+}
+
+function renderFAList() {
+  const el = document.getElementById('fa-list');
+  el.innerHTML = filteredFAs.map(fa => `
+    <div class="list-item ${selectedFA?.fa_id === fa.fa_id ? 'selected' : ''}"
+         onclick="selectFA('${fa.fa_id}')">
+      <div class="item-title">${fa.name}</div>
+      <div class="item-sub">${fa.firm} · ${fa.city}, ${fa.state}</div>
+      <div class="item-badges">
+        <span class="badge badge-${fa.status.toLowerCase()}">${fa.status}</span>
+        <span class="badge badge-t${fa.tier}">T${fa.tier}</span>
+        <span class="badge" style="background:var(--bg4);color:var(--muted)">
+          ${fa.territory}
+        </span>
+        ${fa.warm_lead ? '<span class="badge" style="background:#3d2e00;color:var(--gold)">🔥 Warm</span>' : ''}
+        ${fa.interests?.includes('Baseball') ? '<span class="badge" style="background:#1a3a1a;color:var(--green)">⚾</span>' : ''}
+      </div>
+      <div class="item-sub" style="margin-top:3px">
+        AUM: ${fmtMoney(fa.aum)} · Book: ${fa.book_size}
+        ${fa.status === 'CLIENT' ? ` · OC: ${fmtMoney(fa.oc_aum)}` : ''}
+      </div>
+    </div>`).join('');
+}
+
+function selectFA(id) {
+  selectedFA = faData.advisors.find(f => f.fa_id === id);
+  faOriginal = clone(selectedFA);
+  renderFAList();
+  renderFADetail(selectedFA);
+  document.getElementById('fa-actions').style.display = 'flex';
+}
+
+// Team options come from the codes already in crm_advisors.json (no hard-coded lists),
+// so the editor can never write a code Venus's schedules don't know about.
+function teamSelect(field, fa) {
+  const codes = [...new Set((faData?.advisors || []).map(a => a[field]).filter(Boolean))].sort();
+  if (fa[field] && !codes.includes(fa[field])) codes.push(fa[field]);
+  return `<select class="form-select" id="f-${field}">
+    <option value="">— none —</option>
+    ${codes.map(c => `<option value="${esc(c)}" ${fa[field]===c?'selected':''}>${esc(c)}</option>`).join('')}
+  </select>`;
+}
+
+function renderFADetail(fa) {
+  const interests = (fa.interests || []).join(', ');
+  const connections = (fa.connections || []).join(', ');
+  document.getElementById('fa-detail').innerHTML = `
+  <div class="form-grid">
+    <div class="section-title">Identity</div>
+    <div class="form-group"><label>FA ID</label>
+      <input type="text" id="f-fa_id" value="${fa.fa_id}" readonly style="opacity:0.5"></div>
+    <div class="form-group"><label>Full Name</label>
+      <input type="text" id="f-name" value="${fa.name}"></div>
+    <div class="form-group"><label>First Name</label>
+      <input type="text" id="f-first_name" value="${fa.first_name}"></div>
+    <div class="form-group"><label>Last Name</label>
+      <input type="text" id="f-last_name" value="${fa.last_name}"></div>
+    <div class="form-group"><label>Gender</label>
+      <select class="form-select" id="f-gender">
+        <option ${fa.gender==='M'?'selected':''}>M</option>
+        <option ${fa.gender==='F'?'selected':''}>F</option>
+      </select></div>
+    <div class="form-group"><label>Status</label>
+      <select class="form-select" id="f-status">
+        <option ${fa.status==='PROSPECT'?'selected':''}>PROSPECT</option>
+        <option ${fa.status==='CLIENT'?'selected':''}>CLIENT</option>
+      </select></div>
+
+    <div class="section-title">Firm & Location</div>
+    <div class="form-group"><label>Firm</label>
+      <input type="text" id="f-firm" value="${fa.firm}"></div>
+    <div class="form-group"><label>Tier (1=Wire, 2=Regional, 3=Indie)</label>
+      <select class="form-select" id="f-tier">
+        <option ${fa.tier==1?'selected':''} value="1">1 — Wirehouse</option>
+        <option ${fa.tier==2?'selected':''} value="2">2 — Regional</option>
+        <option ${fa.tier==3?'selected':''} value="3">3 — Independent</option>
+      </select></div>
+    <div class="form-group"><label>Territory</label>
+      <select class="form-select" id="f-territory">
+        <option ${fa.territory==='San Diego'?'selected':''}>San Diego</option>
+        <option ${fa.territory==='Orange County'?'selected':''}>Orange County</option>
+        <option ${fa.territory==='Los Angeles'?'selected':''}>Los Angeles</option>
+        <option ${fa.territory==='San Francisco'?'selected':''}>San Francisco</option>
+      </select></div>
+    <div class="form-group"><label>MLB Team</label>${teamSelect('mlb_team', fa)}</div>
+    <div class="form-group"><label>NBA Team</label>${teamSelect('nba_team', fa)}</div>
+    <div class="form-group"><label>NFL Team</label>${teamSelect('nfl_team', fa)}</div>
+    <div class="form-group"><label>City</label>
+      <input type="text" id="f-city" value="${fa.city}"></div>
+    <div class="form-group"><label>State</label>
+      <input type="text" id="f-state" value="${fa.state}"></div>
+
+    <div class="section-title">Contact</div>
+    <div class="form-group"><label>Phone</label>
+      <input type="text" id="f-phone" value="${fa.phone}"></div>
+    <div class="form-group"><label>Email</label>
+      <input type="email" id="f-email" value="${fa.email}"></div>
+    <div class="form-group"><label>Assistant Name</label>
+      <input type="text" id="f-assistant_name" value="${fa.assistant_name||''}"></div>
+    <div class="form-group"><label>Assistant Phone</label>
+      <input type="text" id="f-assistant_phone" value="${fa.assistant_phone||''}"></div>
+    <div class="form-group"><label>Assistant Email</label>
+      <input type="email" id="f-assistant_email" value="${fa.assistant_email||''}"></div>
+    <div class="form-group"><label>Contact Via Assistant?</label>
+      <select class="form-select" id="f-contact_via_assistant">
+        <option value="false" ${!fa.contact_via_assistant?'selected':''}>No — contact FA directly</option>
+        <option value="true"  ${fa.contact_via_assistant?'selected':''}>Yes — go through assistant</option>
+      </select></div>
+
+    <div class="section-title">Business Profile</div>
+    <div class="form-group"><label>AUM ($)</label>
+      <input type="number" id="f-aum" value="${fa.aum}"></div>
+    <div class="form-group"><label>Book Size (# clients)</label>
+      <input type="number" id="f-book_size" value="${fa.book_size}"></div>
+    <div class="form-group"><label>OC AUM ($)</label>
+      <input type="number" id="f-oc_aum" value="${fa.oc_aum||0}"></div>
+    <div class="form-group"><label>OC Clients</label>
+      <input type="number" id="f-oc_clients" value="${fa.oc_clients||0}"></div>
+    <div class="form-group"><label>Education</label>
+      <input type="text" id="f-education" value="${fa.education||''}"></div>
+    <div class="form-group"><label>Warm Lead?</label>
+      <select class="form-select" id="f-warm_lead">
+        <option value="false" ${!fa.warm_lead?'selected':''}>No</option>
+        <option value="true"  ${fa.warm_lead?'selected':''}>Yes</option>
+      </select></div>
+
+    <div class="section-title">Personalization</div>
+    <div class="form-group full"><label>Interests (comma-separated)</label>
+      <input type="text" id="f-interests" value="${interests}"></div>
+    <div class="form-group full"><label>Connections (comma-separated client names)</label>
+      <input type="text" id="f-connections" value="${connections}"></div>
+    <div class="form-group full"><label>Notes</label>
+      <textarea id="f-notes">${fa.notes||''}</textarea></div>
+  </div>`;
+}
+
+function getFAFormData() {
+  const g = id => document.getElementById(id)?.value;
+  const gb = id => document.getElementById(id)?.value === 'true';
+  return {
+    fa_id: g('f-fa_id'),
+    name: g('f-name'), first_name: g('f-first_name'), last_name: g('f-last_name'),
+    gender: g('f-gender'), status: g('f-status'), firm: g('f-firm'),
+    tier: parseInt(g('f-tier')), territory: g('f-territory'),
+    city: g('f-city'), state: g('f-state'), phone: g('f-phone'), email: g('f-email'),
+    assistant_name: g('f-assistant_name')||null, assistant_phone: g('f-assistant_phone')||null,
+    assistant_email: g('f-assistant_email')||null,
+    contact_via_assistant: gb('f-contact_via_assistant'),
+    aum: parseFloat(g('f-aum')), book_size: parseInt(g('f-book_size')),
+    oc_aum: parseFloat(g('f-oc_aum')||0), oc_clients: parseInt(g('f-oc_clients')||0),
+    education: g('f-education'), warm_lead: gb('f-warm_lead'),
+    interests: g('f-interests').split(',').map(s=>s.trim()).filter(Boolean),
+    connections: g('f-connections').split(',').map(s=>s.trim()).filter(Boolean),
+    notes: g('f-notes'),
+    ...leagueTeams(),
+  };
+}
+
+// Include a team key only if it has a value or the FA already had that key,
+// so untouched FAs don't gain null fields.
+function leagueTeams() {
+  const out = {};
+  ['mlb_team','nba_team','nfl_team'].forEach(k => {
+    const v = document.getElementById('f-' + k)?.value;
+    if (v || (selectedFA && k in selectedFA)) out[k] = v || null;
+  });
+  return out;
+}
+
+async function saveFA() {
+  const updated = getFAFormData();
+  try {
+    const fresh = await apiGet('advisors');
+    const idx = fresh.advisors.findIndex(f => f.fa_id === updated.fa_id);
+    if (idx >= 0) {
+      const orig = faOriginal && faOriginal.fa_id === updated.fa_id ? faOriginal : null;
+      fresh.advisors[idx] = {...fresh.advisors[idx], ...changedFields(updated, orig)};
+    } else fresh.advisors.push(updated);
+    fresh.total = fresh.advisors.length;
+    await apiPost('advisors', fresh);
+    faData = fresh;
+    selectedFA = fresh.advisors.find(f => f.fa_id === updated.fa_id);
+    faOriginal = clone(selectedFA);
+    filterFAs();
+    toast('✅ FA saved');
+  } catch(e) { toast('Save failed: ' + e.message, false); }
+}
+
+function newFA() {
+  const maxId = faData.advisors.reduce((m, f) => {
+    const n = parseInt(f.fa_id.replace('FA-','')) || 0;
+    return Math.max(m, n);
+  }, 0);
+  const newId = `FA-${String(maxId+1).padStart(4,'0')}`;
+  const blank = {
+    fa_id: newId, name: 'New FA', first_name: 'New', last_name: 'FA',
+    gender: 'M', status: 'PROSPECT', firm: '', tier: 3,
+    territory: 'Los Angeles', city: 'Los Angeles', state: 'CA',
+    phone: '', email: '', assistant_name: null, assistant_phone: null,
+    assistant_email: null, contact_via_assistant: false,
+    aum: 0, book_size: 0, oc_aum: 0, oc_clients: 0,
+    education: '', warm_lead: false, interests: [], connections: [], notes: '',
+  };
+  faData.advisors.push(blank);
+  selectedFA = blank;
+  filterFAs();
+  selectFA(newId);
+  toast('New FA created — fill in details and save');
+}
+
+function deleteFA() {
+  if (!selectedFA) return;
+  modal('Delete FA', `Delete ${selectedFA.name}? This cannot be undone.`, async () => {
+    try {
+      const fresh = await apiGet('advisors');
+      fresh.advisors = fresh.advisors.filter(f => f.fa_id !== selectedFA.fa_id);
+      fresh.total = fresh.advisors.length;
+      await apiPost('advisors', fresh);
+      faData = fresh;
+      selectedFA = null;
+      clearFADetail();
+      filterFAs();
+      toast('FA deleted');
+    } catch(e) { toast('Delete failed: ' + e.message, false); }
+  });
+}
+
+function clearFADetail() {
+  selectedFA = null;
+  document.getElementById('fa-detail').innerHTML =
+    '<div class="detail-empty"><div class="icon">👤</div><div>Select an FA to edit</div></div>';
+  document.getElementById('fa-actions').style.display = 'none';
+  renderFAList();
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// CLIENTS TAB
+// ══════════════════════════════════════════════════════════════════════════
+async function loadClients() {
+  try {
+    clientData = await apiGet('clients');
+    // Populate FA filter
+    const fas = [...new Set(clientData.clients.map(c => c.fa_name))].sort();
+    const sel = document.getElementById('cl-fa');
+    fas.forEach(n => { const o = document.createElement('option'); o.textContent = n; sel.appendChild(o); });
+    filterClients();
+  } catch(e) { toast('Failed to load clients: ' + e.message, false); }
+}
+
+function filterClients() {
+  if (!clientData) return;
+  const q    = document.getElementById('cl-search').value.toLowerCase();
+  const fa   = document.getElementById('cl-fa').value;
+  const terr = document.getElementById('cl-territory').value;
+
+  filteredClients = clientData.clients.filter(c => {
+    if (q && !c.name.toLowerCase().includes(q)) return false;
+    if (fa && c.fa_name !== fa) return false;
+    if (terr && c.territory !== terr) return false;
+    return true;
+  });
+
+  document.getElementById('cl-count').textContent = `${filteredClients.length} of ${clientData.clients.length}`;
+  renderClientList();
+}
+
+function renderClientList() {
+  const el = document.getElementById('cl-list');
+  el.innerHTML = filteredClients.map(c => `
+    <div class="list-item ${selectedClient?.account_id === c.account_id ? 'selected' : ''}"
+         onclick="selectClient('${c.account_id}')">
+      <div class="item-title">${c.name}</div>
+      <div class="item-sub">${c.account_id} · ${c.fa_name}</div>
+      <div class="item-sub">${c.firm} · ${c.territory}${c.address ? ' · ' + c.address.city : ''}</div>
+      <div class="item-sub" style="margin-top:3px">
+        OCRFF: ${fmtMoney(c.ocrff_account_value)} (${fmt(c.ocrff_shares)} shares)
+      </div>
+      <div class="item-badges">
+        ${c.status && c.status !== 'ACTIVE' ? `<span class="badge" style="background:var(--red-dim);color:var(--red)">${esc(c.status)}</span>` : ''}
+        ${Object.keys(c.pending_changes || {}).map(k => `<span class="badge" style="background:#3d2e00;color:var(--gold)">⏳ ${esc(k)}</span>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function selectClient(id) {
+  selectedClient = clientData.clients.find(c => c.account_id === id);
+  clientOriginal = clone(selectedClient);
+  editBene = beneFromRecord(selectedClient);
+  renderClientList();
+  renderClientDetail(selectedClient);
+  document.getElementById('cl-actions').style.display = 'flex';
+}
+
+function renderClientDetail(c) {
+  document.getElementById('cl-detail').innerHTML = `
+  <div class="form-grid">
+    <div class="section-title">Identity</div>
+    <div class="form-group"><label>Account ID</label>
+      <input type="text" id="c-account_id" value="${c.account_id}" readonly style="opacity:0.5"></div>
+    <div class="form-group"><label>Full Name</label>
+      <input type="text" id="c-name" value="${c.name}"></div>
+    <div class="form-group"><label>Email</label>
+      <input type="email" id="c-email" value="${c.email||''}"></div>
+    <div class="form-group"><label>Phone</label>
+      <input type="text" id="c-phone" value="${c.phone||''}"></div>
+    <div class="form-group"><label>Status</label>
+      <select class="form-select" id="c-status">
+        <option ${c.status==='ACTIVE'?'selected':''}>ACTIVE</option>
+        <option ${c.status==='INACTIVE'?'selected':''}>INACTIVE</option>
+        <option ${c.status==='CLOSED'?'selected':''}>CLOSED</option>
+      </select></div>
+
+    <div class="section-title">Advisor</div>
+    <div class="form-group"><label>FA ID</label>
+      <input type="text" id="c-fa_id" value="${c.fa_id}"></div>
+    <div class="form-group"><label>FA Name</label>
+      <input type="text" id="c-fa_name" value="${c.fa_name}"></div>
+    <div class="form-group"><label>Firm</label>
+      <input type="text" id="c-firm" value="${c.firm}"></div>
+    <div class="form-group"><label>Territory</label>
+      <select class="form-select" id="c-territory">
+        <option ${c.territory==='San Diego'?'selected':''}>San Diego</option>
+        <option ${c.territory==='Orange County'?'selected':''}>Orange County</option>
+        <option ${c.territory==='Los Angeles'?'selected':''}>Los Angeles</option>
+        <option ${c.territory==='San Francisco'?'selected':''}>San Francisco</option>
+      </select></div>
+
+    <div class="section-title">OCRFF Holdings</div>
+    <div class="form-group"><label>OCRFF Shares</label>
+      <input type="number" id="c-ocrff_shares" value="${c.ocrff_shares}" step="0.0001"></div>
+    <div class="form-group"><label>Account Value ($)</label>
+      <input type="number" id="c-ocrff_account_value" value="${c.ocrff_account_value}" step="0.01"></div>
+    <div class="form-group"><label>Inception Date</label>
+      <input type="text" id="c-inception_date" value="${c.inception_date||''}"></div>
+    <div class="form-group"><label>Mail Statements to FA?</label>
+      <select class="form-select" id="c-mail_to_fa">
+        <option value="false" ${!c.mail_to_fa?'selected':''}>No — send to client</option>
+        <option value="true"  ${c.mail_to_fa?'selected':''}>Yes — mail to FA</option>
+      </select></div>
+    <div class="form-group full"><label>Notes</label>
+      <textarea id="c-notes">${c.notes||''}</textarea></div>
+
+    <div class="section-title">Address of Record</div>
+    <div class="form-group"><label>Street</label>
+      <input type="text" id="c-addr_street" value="${esc(c.address?.street)}"></div>
+    <div class="form-group"><label>Unit</label>
+      <input type="text" id="c-addr_unit" value="${esc(c.address?.unit)}"></div>
+    <div class="form-group"><label>City</label>
+      <input type="text" id="c-addr_city" value="${esc(c.address?.city)}"></div>
+    <div class="form-group"><label>State / ZIP</label>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="c-addr_state" value="${esc(c.address?.state || 'CA')}" style="width:70px">
+        <input type="text" id="c-addr_zip" value="${esc(c.address?.zip)}">
+      </div></div>
+
+    <div class="section-title">Beneficiaries</div>
+    <div class="form-group full">
+      <div id="c-bene-rows"></div>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:8px">
+        <button class="btn" type="button" onclick="addBeneRow()">+ Add beneficiary</button>
+        <span id="c-bene-totals" class="count-badge"></span>
+      </div>
+    </div>
+
+    <div class="section-title">Pending Changes (managed by Orbit — read only)</div>
+    <div class="form-group full">
+      <textarea id="c-pending" readonly style="opacity:0.7;min-height:50px">${esc(Object.keys(c.pending_changes||{}).length ? JSON.stringify(c.pending_changes, null, 2) : 'None')}</textarea></div>
+    <div class="section-title">Change History (Orbit audit trail — read only)</div>
+    <div class="form-group full">
+      <textarea id="c-history" readonly style="opacity:0.7;min-height:50px">${esc((c.change_history||[]).length ? JSON.stringify(c.change_history, null, 2) : 'No approved changes yet')}</textarea></div>
+  </div>`;
+  renderBeneRows();
+}
+
+// ── Beneficiary rows ───────────────────────────────────────────────────────
+const REL_OPTIONS = ['Spouse','Domestic Partner','Child','Grandchild','Sibling','Parent','Friend','Trust','Other'];
+let editBene = [];
+
+function beneFromRecord(c) {
+  if (Array.isArray(c.beneficiary)) return clone(c.beneficiary);
+  if (typeof c.beneficiary === 'string' && c.beneficiary.trim())      // un-migrated v1 record
+    return [{name: c.beneficiary, relationship: 'Other', type: 'primary', percent: 100}];
+  return [];
+}
+
+function renderBeneRows() {
+  const el = document.getElementById('c-bene-rows');
+  if (!el) return;
+  const head = `<div style="display:grid;grid-template-columns:2fr 1.3fr 1.1fr 80px 32px;gap:6px;
+                            font-size:10px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">
+    <span>Name</span><span>Relationship</span><span>Type</span><span>Percent</span><span></span></div>`;
+  el.innerHTML = head + editBene.map((b, i) => `
+    <div style="display:grid;grid-template-columns:2fr 1.3fr 1.1fr 80px 32px;gap:6px;margin-bottom:6px">
+      <input type="text" value="${esc(b.name)}" oninput="setBene(${i},'name',this.value)">
+      <select class="form-select" onchange="setBene(${i},'relationship',this.value)">
+        ${REL_OPTIONS.map(r => `<option ${b.relationship===r?'selected':''}>${r}</option>`).join('')}
+      </select>
+      <select class="form-select" onchange="setBene(${i},'type',this.value)">
+        <option value="primary" ${b.type==='primary'?'selected':''}>primary</option>
+        <option value="contingent" ${b.type==='contingent'?'selected':''}>contingent</option>
+      </select>
+      <input type="number" min="0" max="100" step="1" value="${esc(b.percent)}"
+             oninput="setBene(${i},'percent',this.value)">
+      <button class="btn btn-danger" type="button" onclick="removeBene(${i})">✕</button>
+    </div>`).join('');
+  updateBeneTotals();
+}
+
+function setBene(i, key, val) {
+  editBene[i][key] = key === 'percent' ? (val === '' ? '' : Number(val)) : val;
+  updateBeneTotals();
+}
+function addBeneRow() {
+  editBene.push({name: '', relationship: 'Child', type: 'primary', percent: 0});
+  renderBeneRows();
+}
+function removeBene(i) { editBene.splice(i, 1); renderBeneRows(); }
+
+function beneTotals() {
+  const t = {primary: 0, contingent: 0}, n = {primary: 0, contingent: 0};
+  editBene.forEach(b => { if (b.type in t) { t[b.type] += Number(b.percent) || 0; n[b.type]++; } });
+  return {t, n};
+}
+function updateBeneTotals() {
+  const el = document.getElementById('c-bene-totals');
+  if (!el) return;
+  const {t, n} = beneTotals();
+  const fmtT = k => n[k] ? `<span style="color:${Math.abs(t[k]-100)<0.001?'var(--green)':'var(--red)'}">${k} ${t[k]}%</span>` : '';
+  el.innerHTML = [fmtT('primary'), fmtT('contingent')].filter(Boolean).join(' · ') || 'No beneficiaries';
+}
+
+function validateClient(c) {
+  const errs = [];
+  const a = c.address || {};
+  if (a.street || a.city || a.zip) {
+    if (!String(a.street||'').trim()) errs.push('Address: street is required');
+    if (!String(a.city||'').trim())   errs.push('Address: city is required');
+    if (!/^\d{5}$/.test(String(a.zip||'').trim())) errs.push('Address: ZIP must be 5 digits');
+  }
+  const b = c.beneficiary;
+  if (Array.isArray(b) && b.length) {
+    const {t, n} = beneTotals();
+    if (!n.primary) errs.push('Beneficiaries: at least one primary is required');
+    ['primary','contingent'].forEach(k => {
+      if (n[k] && Math.abs(t[k] - 100) > 0.001) errs.push(`Beneficiaries: ${k} percentages total ${t[k]}%, not 100%`);
+    });
+    b.forEach((x, i) => { if (!String(x.name||'').trim()) errs.push(`Beneficiary ${i+1}: name is required`); });
+  }
+  return errs;
+}
+
+function getClientFormData() {
+  const g = id => document.getElementById(id)?.value;
+  return {
+    account_id: g('c-account_id'), name: g('c-name'),
+    email: g('c-email'), phone: g('c-phone'),
+    address: {
+      street: g('c-addr_street').trim(), unit: g('c-addr_unit').trim(),
+      city: g('c-addr_city').trim(), state: g('c-addr_state').trim().toUpperCase(),
+      zip: g('c-addr_zip').trim(),
+    },
+    beneficiary: clone(editBene),
+    status: g('c-status'), fa_id: g('c-fa_id'), fa_name: g('c-fa_name'),
+    firm: g('c-firm'), territory: g('c-territory'),
+    ocrff_shares: parseFloat(g('c-ocrff_shares')),
+    ocrff_account_value: parseFloat(g('c-ocrff_account_value')),
+    inception_date: g('c-inception_date'),
+    mail_to_fa: g('c-mail_to_fa') === 'true',
+    notes: g('c-notes'),
+  };
+}
+
+async function saveClient() {
+  const updated = getClientFormData();
+  const errs = validateClient(updated);
+  if (errs.length) { toast(errs[0], false); return; }
+  try {
+    const fresh = await apiGet('clients');
+    const idx = fresh.clients.findIndex(c => c.account_id === updated.account_id);
+    if (idx >= 0) {
+      const orig = clientOriginal && clientOriginal.account_id === updated.account_id ? clientOriginal : null;
+      fresh.clients[idx] = {...fresh.clients[idx], ...changedFields(updated, orig)};
+    } else {
+      fresh.clients.push({...updated, change_history: []});
+    }
+    fresh.total = fresh.clients.length;
+    await apiPost('clients', fresh);
+    clientData = fresh;
+    selectedClient = fresh.clients.find(c => c.account_id === updated.account_id);
+    clientOriginal = clone(selectedClient);
+    editBene = beneFromRecord(selectedClient);
+    filterClients();
+    renderClientDetail(selectedClient);
+    toast('✅ Client saved');
+  } catch(e) { toast('Save failed: ' + e.message, false); }
+}
+
+function newClient() {
+  const maxId = clientData.clients.reduce((m, c) => {
+    const n = parseInt(c.account_id.replace('OC-CLIENT-','')) || 0;
+    return Math.max(m, n);
+  }, 0);
+  const newId = `OC-CLIENT-${String(maxId+1).padStart(4,'0')}`;
+  const blank = {
+    account_id: newId, name: 'New Client', email: '', phone: '',
+    address: {street: '', unit: '', city: '', state: 'CA', zip: ''},
+    beneficiary: [], change_history: [], status: 'ACTIVE', fa_id: '', fa_name: '',
+    firm: '', territory: 'Los Angeles', ocrff_shares: 0,
+    ocrff_account_value: 0, inception_date: new Date().toISOString().slice(0,10),
+    mail_to_fa: false, notes: '',
+  };
+  clientData.clients.push(blank);
+  selectedClient = blank;
+  filterClients();
+  selectClient(newId);
+  toast('New client created — fill in details and save');
+}
+
+function deleteClient() {
+  if (!selectedClient) return;
+  modal('Delete Client', `Delete ${selectedClient.name} (${selectedClient.account_id})?`, async () => {
+    try {
+      const fresh = await apiGet('clients');
+      fresh.clients = fresh.clients.filter(c => c.account_id !== selectedClient.account_id);
+      fresh.total = fresh.clients.length;
+      await apiPost('clients', fresh);
+      clientData = fresh;
+      selectedClient = null;
+      clearClientDetail();
+      filterClients();
+      toast('Client deleted');
+    } catch(e) { toast('Delete failed: ' + e.message, false); }
+  });
+}
+
+function clearClientDetail() {
+  selectedClient = null;
+  document.getElementById('cl-detail').innerHTML =
+    '<div class="detail-empty"><div class="icon">👥</div><div>Select a client to edit</div></div>';
+  document.getElementById('cl-actions').style.display = 'none';
+  renderClientList();
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// HOLDINGS TAB
+// ══════════════════════════════════════════════════════════════════════════
+async function loadHoldings() {
+  try {
+    holdingsData = await apiGet('holdings');
+    renderHoldingSummary();
+    filterHoldings();
+  } catch(e) { toast('Failed to load holdings: ' + e.message, false); }
+}
+
+function renderHoldingSummary() {
+  const s = holdingsData.summary;
+  const gl = s.total_gain_loss;
+  const glCls = gl >= 0 ? 'pos' : 'neg';
+  document.getElementById('h-summary').innerHTML = `
+    <div class="summary-cards">
+      <div class="sum-card"><div class="lbl">Portfolio</div>
+        <div class="val" style="color:var(--blue)">${fmtMoney(s.total_portfolio_value)}</div></div>
+      <div class="sum-card"><div class="lbl">Gain / Loss</div>
+        <div class="val ${glCls}">${fmtPct(s.total_gain_loss_pct)}</div></div>
+      <div class="sum-card"><div class="lbl">Cash (VMRXX)</div>
+        <div class="val">${fmtMoney(s.cash_value)}</div></div>
+      <div class="sum-card"><div class="lbl">Positions</div>
+        <div class="val">${Object.keys(holdingsData.positions).length}</div></div>
+    </div>`;
+}
+
+function filterHoldings() {
+  if (!holdingsData) return;
+  const q    = document.getElementById('h-search').value.toLowerCase();
+  const type = document.getElementById('h-type').value;
+
+  filteredHoldings = Object.entries(holdingsData.positions).filter(([ticker, pos]) => {
+    if (q && !ticker.toLowerCase().includes(q) && !pos.company.toLowerCase().includes(q)) return false;
+    if (type && pos.asset_type !== type) return false;
+    return true;
+  }).sort((a,b) => b[1].market_value - a[1].market_value);
+
+  document.getElementById('h-count').textContent = `${filteredHoldings.length} positions`;
+  renderHoldingList();
+}
+
+function renderHoldingList() {
+  const el = document.getElementById('h-list');
+  el.innerHTML = filteredHoldings.map(([ticker, pos]) => {
+    const gl = pos.gain_loss_pct;
+    const glCls = gl >= 0 ? 'pos' : 'neg';
+    return `
+    <div class="list-item ${selectedTicker === ticker ? 'selected' : ''}"
+         onclick="selectHolding('${ticker}')">
+      <div class="item-title" style="display:flex;gap:8px;align-items:center">
+        <span style="color:var(--blue)">${ticker}</span>
+        <span class="badge badge-${pos.asset_type}">${pos.asset_type.toUpperCase()}</span>
+      </div>
+      <div class="item-sub">${pos.company}</div>
+      <div class="item-sub" style="margin-top:3px;display:flex;gap:12px">
+        <span>${fmtMoney(pos.market_value)}</span>
+        <span class="${glCls}">${fmtPct(pos.gain_loss_pct)}</span>
+        <span style="color:var(--muted)">${fmt(pos.shares)} sh</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function selectHolding(ticker) {
+  selectedTicker = ticker;
+  const pos = holdingsData.positions[ticker];
+  renderHoldingList();
+  renderHoldingDetail(ticker, pos);
+  document.getElementById('h-actions').style.display = 'flex';
+}
+
+function renderHoldingDetail(ticker, pos) {
+  document.getElementById('h-detail').innerHTML = `
+  <div id="h-summary" style="margin-bottom:16px"></div>
+  <div class="form-grid">
+    <div class="section-title">Position</div>
+    <div class="form-group"><label>Ticker</label>
+      <input type="text" id="h-ticker" value="${ticker}" readonly style="opacity:0.5"></div>
+    <div class="form-group"><label>Company Name</label>
+      <input type="text" id="h-company" value="${pos.company}"></div>
+    <div class="form-group"><label>Asset Type</label>
+      <select class="form-select" id="h-asset_type">
+        <option ${pos.asset_type==='equity'?'selected':''} value="equity">Equity</option>
+        <option ${pos.asset_type==='etf'?'selected':''} value="etf">ETF</option>
+      </select></div>
+
+    <div class="section-title">Shares & Cost</div>
+    <div class="form-group"><label>Shares</label>
+      <input type="number" id="h-shares" value="${pos.shares}" step="0.000001"></div>
+    <div class="form-group"><label>Avg Cost Per Share ($)</label>
+      <input type="number" id="h-avg_cost" value="${pos.avg_cost_per_share}" step="0.0001"></div>
+    <div class="form-group"><label>Cost Basis ($)</label>
+      <input type="number" id="h-cost_basis" value="${pos.cost_basis}" step="0.01"></div>
+
+    <div class="section-title">Pricing</div>
+    <div class="form-group"><label>Last Price ($)</label>
+      <input type="number" id="h-last_price" value="${pos.last_price}" step="0.0001"></div>
+    <div class="form-group"><label>Market Value ($)</label>
+      <input type="number" id="h-market_value" value="${pos.market_value}" step="0.01"></div>
+    <div class="form-group"><label>Gain / Loss ($)</label>
+      <input type="number" id="h-gain_loss" value="${pos.gain_loss}" step="0.01"></div>
+    <div class="form-group"><label>Gain / Loss %</label>
+      <input type="number" id="h-gain_loss_pct" value="${pos.gain_loss_pct}" step="0.01"></div>
+    <div class="form-group"><label>Price Date</label>
+      <input type="text" id="h-price_date" value="${pos.price_date||''}"></div>
+    <div class="form-group"><label>Price Source</label>
+      <input type="text" id="h-price_source" value="${pos.price_source||''}"></div>
+  </div>`;
+  renderHoldingSummary();
+}
+
+function getHoldingFormData() {
+  const g = id => document.getElementById(id)?.value;
+  return {
+    company: g('h-company'), asset_type: g('h-asset_type'),
+    shares: parseFloat(g('h-shares')), avg_cost_per_share: parseFloat(g('h-avg_cost')),
+    cost_basis: parseFloat(g('h-cost_basis')), last_price: parseFloat(g('h-last_price')),
+    market_value: parseFloat(g('h-market_value')), gain_loss: parseFloat(g('h-gain_loss')),
+    gain_loss_pct: parseFloat(g('h-gain_loss_pct')),
+    price_date: g('h-price_date'), price_source: g('h-price_source'),
+    ticker: selectedTicker,
+  };
+}
+
+async function saveHolding() {
+  const updated = getHoldingFormData();
+  holdingsData.positions[selectedTicker] = {
+    ...holdingsData.positions[selectedTicker], ...updated
+  };
+  recomputeHoldingSummary();
+  try {
+    await apiPost('holdings', holdingsData);
+    renderHoldingSummary();
+    filterHoldings();
+    toast('✅ Position saved');
+  } catch(e) { toast('Save failed: ' + e.message, false); }
+}
+
+function recomputeHoldingSummary() {
+  const positions = holdingsData.positions;
+  const s = holdingsData.summary;
+  const totalEquity = Object.values(positions).filter(p=>p.asset_type==='equity')
+                            .reduce((sum,p)=>sum+p.market_value,0);
+  const totalEtf    = Object.values(positions).filter(p=>p.asset_type==='etf')
+                            .reduce((sum,p)=>sum+p.market_value,0);
+  const totalInvested = totalEquity + totalEtf;
+  const totalPortfolio = totalInvested + s.cash_value;
+  const totalCb = Object.values(positions).reduce((sum,p)=>sum+p.cost_basis,0);
+  const totalGl = Object.values(positions).reduce((sum,p)=>sum+p.gain_loss,0);
+  s.total_equity_value = Math.round(totalEquity*100)/100;
+  s.total_etf_value    = Math.round(totalEtf*100)/100;
+  s.total_invested     = Math.round(totalInvested*100)/100;
+  s.total_portfolio_value = Math.round(totalPortfolio*100)/100;
+  s.total_cost_basis   = Math.round(totalCb*100)/100;
+  s.total_gain_loss    = Math.round(totalGl*100)/100;
+  s.total_gain_loss_pct = totalCb ? Math.round((totalGl/totalCb)*10000)/100 : 0;
+  s.cash_pct = totalPortfolio ? Math.round((s.cash_value/totalPortfolio)*10000)/100 : 0;
+}
+
+function newHolding() {
+  const ticker = prompt('Enter ticker symbol (e.g. MSFT):');
+  if (!ticker) return;
+  const t = ticker.toUpperCase().trim();
+  if (holdingsData.positions[t]) { toast(`${t} already exists`, false); return; }
+  holdingsData.positions[t] = {
+    company: t, ticker: t, shares: 0, avg_cost_per_share: 0, cost_basis: 0,
+    last_price: 0, market_value: 0, gain_loss: 0, gain_loss_pct: 0,
+    asset_type: 'equity', price_date: new Date().toISOString().slice(0,10),
+    price_source: 'manual',
+  };
+  selectedTicker = t;
+  filterHoldings();
+  selectHolding(t);
+  toast(`New position ${t} created — fill in details and save`);
+}
+
+function deleteHolding() {
+  if (!selectedTicker) return;
+  modal('Remove Position', `Remove ${selectedTicker} from holdings?`, async () => {
+    delete holdingsData.positions[selectedTicker];
+    recomputeHoldingSummary();
+    try {
+      await apiPost('holdings', holdingsData);
+      selectedTicker = null;
+      clearHoldingDetail();
+      filterHoldings();
+      toast('Position removed');
+    } catch(e) { toast('Delete failed: ' + e.message, false); }
+  });
+}
+
+function clearHoldingDetail() {
+  selectedTicker = null;
+  document.getElementById('h-detail').innerHTML =
+    `<div id="h-summary" style="margin-bottom:16px"></div>
+     <div class="detail-empty"><div class="icon">📊</div><div>Select a position to edit</div></div>`;
+  renderHoldingSummary();
+  document.getElementById('h-actions').style.display = 'none';
+  renderHoldingList();
+}
+
+async function refreshPrices() {
+  toast('⏳ Refreshing prices...');
+  try {
+    const r = await fetch(`${API}/api/refresh-prices`, {method:'POST'});
+    const data = await r.json();
+    if (data.ok) {
+      holdingsData = await apiGet('holdings');
+      renderHoldingSummary();
+      filterHoldings();
+      toast('✅ Prices refreshed');
+    } else {
+      toast('Price refresh failed: ' + (data.error || 'unknown'), false);
+    }
+  } catch(e) { toast('Refresh failed: ' + e.message, false); }
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+checkStatus();
+setInterval(checkStatus, 30000);
+loadFAs();  // Load FA tab on startup
+</script>
+</body>
+</html>

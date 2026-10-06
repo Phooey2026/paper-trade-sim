@@ -63,18 +63,17 @@ def recompute_summary(holdings):
 
 def execute_ocrff_buy(amount_dollars, nav, source="orbit", issue_id=""):
     """
-    Client buys OCRFF shares. Money appears in VMRXX (simulated wire),
-    then is deployed into the fund position.
+    Client buys OCRFF shares. The money arrives in VMRXX (simulated wire).
     Returns: (transaction_record, error_string)
     """
     holdings = load_holdings()
     s = holdings["summary"]
     shares = round(amount_dollars / nav, 6)
 
-    # Add cash first (simulated external wire)
+    # The client's money arrives in VMRXX (simulated wire) and STAYS there until Neptune invests it.
+    # The fund's portfolio grows by exactly what the client paid, and the client receives shares at NAV,
+    # so NAV (portfolio value / client shares) is unchanged by the purchase.
     s["cash_value"] = round(s["cash_value"] + amount_dollars, 2)
-    # Then deduct for fund purchase
-    s["cash_value"] = round(s["cash_value"] - amount_dollars, 2)
 
     txn = {
         "transaction_id": f"TXN-{source.upper()}-{datetime.now().strftime('%Y%m%d%H%M%S')}",
