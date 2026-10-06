@@ -1,0 +1,494 @@
+{
+  "_comment": "Curated real venues for Obsidian Capital sales meetings. Indexed by territory and activity.",
+  "_stadiums_comment": "Namespaced per league — MLB/NBA/NFL team codes collide (LAC is both the Clippers and the Chargers), so lookups must go through stadiums.<league>.<code>, never a flat dict.",
+  "stadiums": {
+    "mlb": {
+      "LAD": {
+        "name": "Dodger Stadium",
+        "address": "1000 Vin Scully Ave, Los Angeles, CA 90012",
+        "territory": "Los Angeles",
+        "parking_tip": "Lot B near the Stadium Club entrance",
+        "club_level": "Stadium Club or Reserve Level seats"
+      },
+      "SDP": {
+        "name": "Petco Park",
+        "address": "100 Park Blvd, San Diego, CA 92101",
+        "territory": "San Diego",
+        "parking_tip": "7th & K Garage or rideshare to Park Blvd",
+        "club_level": "Western Metal Supply Club or Toyota Terrace"
+      },
+      "LAA": {
+        "name": "Angel Stadium",
+        "address": "2000 E Gene Autry Way, Anaheim, CA 92806",
+        "territory": "Orange County",
+        "parking_tip": "Lot A adjacent to main entrance",
+        "club_level": "Club Level or Delta Sky360 Club"
+      },
+      "SFG": {
+        "name": "Oracle Park",
+        "address": "24 Willie Mays Plaza, San Francisco, CA 94107",
+        "territory": "San Francisco",
+        "parking_tip": "Rideshare recommended — Lot A off 3rd St",
+        "club_level": "Club Level or Gotham Club"
+      }
+    },
+    "nba": {
+      "LAL": {
+        "name": "Crypto.com Arena",
+        "address": "1111 S Figueroa St, Los Angeles, CA 90015",
+        "territory": "Los Angeles",
+        "parking_tip": "Star Park Garage, or rideshare drop-off on Chick Hearn Ct",
+        "club_level": "Chairman's Room or Lexus Club",
+        "demand_tier": "high",
+        "demand_note": "2026-27 listed ticket floors ran well above the Clippers/Kings for most games ($100-$350+) — high-demand, lead with this one when it's live."
+      },
+      "LAC": {
+        "name": "Intuit Dome",
+        "address": "3939 S Prairie Ave, Inglewood, CA 90305",
+        "territory": "San Diego",
+        "territory_note": "Venue is in Inglewood, but Clippers fandom is assigned to the San Diego territory in crm_advisors.json (paired with the Chargers) — keep this territory value in sync with that mapping.",
+        "parking_tip": "Dome parking lots off Prairie Ave — book ahead, limited street parking",
+        "club_level": "Halo Club",
+        "demand_tier": "moderate",
+        "demand_note": "Listed ticket floors mostly $20-$60 — a reliable, lower-pressure option, good when it's the only hook available."
+      },
+      "SAC": {
+        "name": "Golden 1 Center",
+        "address": "500 David J Stern Walk, Sacramento, CA 95814",
+        "territory": "Sacramento",
+        "parking_tip": "Downtown Commons (DOCO) garage adjacent to the arena",
+        "club_level": "Above the Rim Club",
+        "demand_tier": "moderate",
+        "demand_note": "Not currently mapped to any FA territory (Sacramento isn't one of the four); kept for future use."
+      },
+      "GSW": {
+        "name": "Chase Center",
+        "address": "1 Warriors Way, San Francisco, CA 94158",
+        "territory": "San Francisco",
+        "parking_tip": "Chase Center Garage or rideshare — Mission Bay traffic is heavy pre-game",
+        "club_level": "Verizon Club",
+        "demand_tier": "high",
+        "demand_note": "Listed ticket floors comparable to the Lakers — high-demand, lead with this when live."
+      }
+    },
+    "nfl": {
+      "LAR": {
+        "name": "SoFi Stadium",
+        "address": "1001 Stadium Dr, Inglewood, CA 90301",
+        "territory": "Los Angeles",
+        "parking_tip": "SoFi lots require advance purchase — arrange well ahead of game day",
+        "club_level": "Infinity Club or Coca-Cola Club"
+      },
+      "LAC": {
+        "name": "SoFi Stadium",
+        "address": "1001 Stadium Dr, Inglewood, CA 90301",
+        "territory": "San Diego",
+        "parking_tip": "SoFi lots require advance purchase — arrange well ahead of game day",
+        "club_level": "Infinity Club or Coca-Cola Club",
+        "shared_venue_note": "Shares SoFi Stadium with the Rams (stadiums.nfl.LAR) — same address, different tenant."
+      },
+      "SF": {
+        "name": "Levi's Stadium",
+        "address": "4900 Marie P DeBartolo Way, Santa Clara, CA 95054",
+        "territory": "San Francisco",
+        "parking_tip": "Lot F or VTA light rail from downtown San Jose — traffic is heavy",
+        "club_level": "Chase Center Club or Pepsi Club"
+      }
+    }
+  },
+  "restaurants": {
+    "Los Angeles": {
+      "upscale": [
+        {
+          "name": "Nobu Malibu",
+          "address": "22706 Pacific Coast Hwy, Malibu, CA 90265",
+          "cuisine": "Japanese fusion",
+          "vibe": "oceanfront, celebrity-friendly, impressive",
+          "price_range": "$$$$$"
+        },
+        {
+          "name": "Spago Beverly Hills",
+          "address": "176 N Canon Dr, Beverly Hills, CA 90210",
+          "cuisine": "California cuisine",
+          "vibe": "Wolfgang Puck flagship, power lunch institution",
+          "price_range": "$$$$$"
+        },
+        {
+          "name": "Catch LA",
+          "address": "8715 Melrose Ave, West Hollywood, CA 90069",
+          "cuisine": "Seafood",
+          "vibe": "rooftop, trendy, great for relationship-building",
+          "price_range": "$$$$"
+        },
+        {
+          "name": "Perino's",
+          "address": "4101 Wilshire Blvd, Los Angeles, CA 90010",
+          "cuisine": "Italian",
+          "vibe": "old-school LA institution, private booths, discreet",
+          "price_range": "$$$$"
+        },
+        {
+          "name": "n/naka",
+          "address": "3455 Overland Ave, Los Angeles, CA 90034",
+          "cuisine": "Japanese kaiseki",
+          "vibe": "Michelin-starred, intimate, memorable experience",
+          "price_range": "$$$$$"
+        }
+      ],
+      "casual_lunch": [
+        {
+          "name": "Gjusta",
+          "address": "320 Sunset Ave, Venice, CA 90291",
+          "cuisine": "California deli",
+          "vibe": "Venice institution, relaxed, great for creative types",
+          "price_range": "$$"
+        },
+        {
+          "name": "République",
+          "address": "624 S La Brea Ave, Los Angeles, CA 90036",
+          "cuisine": "French-California",
+          "vibe": "stunning room, perfect for a business lunch",
+          "price_range": "$$$"
+        }
+      ],
+      "coffee": [
+        {
+          "name": "Blue Bottle Coffee — Venice",
+          "address": "1103 Abbot Kinney Blvd, Venice, CA 90291",
+          "vibe": "low-key, artsy neighborhood, good for casual first meetings"
+        },
+        {
+          "name": "Alfred Coffee — Melrose Place",
+          "address": "8428 Melrose Pl, Los Angeles, CA 90069",
+          "vibe": "LA iconic, photographed, great for quick 30-min chats"
+        },
+        {
+          "name": "Go Get Em Tiger — Larchmont",
+          "address": "230 N Larchmont Blvd, Los Angeles, CA 90004",
+          "vibe": "neighborhood feel, serious coffee, not pretentious"
+        }
+      ]
+    },
+    "San Diego": {
+      "upscale": [
+        {
+          "name": "Addison",
+          "address": "5200 Grand Del Mar Way, San Diego, CA 92130",
+          "cuisine": "French-American",
+          "vibe": "only Michelin 2-star in SD, exceptional for top-tier FAs",
+          "price_range": "$$$$$"
+        },
+        {
+          "name": "Ironside Fish & Oyster",
+          "address": "1654 India St, San Diego, CA 92101",
+          "cuisine": "Seafood",
+          "vibe": "stunning industrial-chic room, Little Italy, impressive",
+          "price_range": "$$$$"
+        },
+        {
+          "name": "Animae",
+          "address": "969 Pacific Hwy, San Diego, CA 92101",
+          "cuisine": "Asian fusion",
+          "vibe": "contemporary, dramatic room, great for relationship-building",
+          "price_range": "$$$$"
+        },
+        {
+          "name": "The Marine Room",
+          "address": "2000 Spindrift Dr, La Jolla, CA 92037",
+          "cuisine": "French-inspired seafood",
+          "vibe": "waves literally crash against the windows, unforgettable",
+          "price_range": "$$$$$"
+        }
+      ],
+      "casual_lunch": [
+        {
+          "name": "Puesto at The Headquarters",
+          "address": "789 W Harbor Dr, San Diego, CA 92101",
+          "cuisine": "Mexican",
+          "vibe": "waterfront, lively, great for relaxed conversations",
+          "price_range": "$$"
+        },
+        {
+          "name": "Born & Raised",
+          "address": "1909 India St, San Diego, CA 92101",
+          "cuisine": "American steakhouse",
+          "vibe": "power lunch spot, Little Italy, impeccable service",
+          "price_range": "$$$$"
+        }
+      ],
+      "coffee": [
+        {
+          "name": "Bird Rock Coffee Roasters — La Jolla",
+          "address": "5627 La Jolla Blvd, La Jolla, CA 92037",
+          "vibe": "San Diego's best roaster, neighborhood feel, easy parking"
+        },
+        {
+          "name": "Achilles Coffee Roasters",
+          "address": "3580 5th Ave, San Diego, CA 92103",
+          "vibe": "Hillcrest gem, quiet enough for a real conversation"
+        }
+      ]
+    },
+    "Orange County": {
+      "upscale": [
+        {
+          "name": "The Winery Restaurant & Wine Bar",
+          "address": "19730 Madrona Ave, Tustin, CA 92705",
+          "cuisine": "American with extensive wine list",
+          "vibe": "OC power-lunch institution, beloved by finance crowd",
+          "price_range": "$$$$"
+        },
+        {
+          "name": "Mastro's Ocean Club",
+          "address": "8112 E Coast Hwy, Newport Beach, CA 92657",
+          "cuisine": "Steakhouse/seafood",
+          "vibe": "Newport Beach splurge, stunning views, very impressive",
+          "price_range": "$$$$$"
+        },
+        {
+          "name": "Arc Restaurant",
+          "address": "333 Bayside Dr, Newport Beach, CA 92660",
+          "cuisine": "Wood-fired American",
+          "vibe": "Newport harbor views, relaxed luxury, great for longer lunches",
+          "price_range": "$$$$"
+        },
+        {
+          "name": "Marché Moderne",
+          "address": "7862 E Pacific Coast Hwy, Newport Beach, CA 92657",
+          "cuisine": "French bistro",
+          "vibe": "Crystal Cove, classic French, understated elegance",
+          "price_range": "$$$$"
+        }
+      ],
+      "casual_lunch": [
+        {
+          "name": "Bear Flag Fish Co.",
+          "address": "3421 Via Lido, Newport Beach, CA 92663",
+          "cuisine": "Casual seafood",
+          "vibe": "Newport icon, fresh fish, relaxed harbor-side lunch",
+          "price_range": "$$"
+        }
+      ],
+      "coffee": [
+        {
+          "name": "Portola Coffee — The Camp",
+          "address": "2525 Main St, Costa Mesa, CA 92627",
+          "vibe": "OC's premier specialty roaster, outdoor setting, easy conversation"
+        },
+        {
+          "name": "Kéan Coffee — Newport Beach",
+          "address": "2441 W Coast Hwy, Newport Beach, CA 92663",
+          "vibe": "harbor-adjacent, serious coffee, quiet enough for business"
+        }
+      ]
+    },
+    "San Francisco": {
+      "upscale": [
+        {
+          "name": "Quince",
+          "address": "470 Pacific Ave, San Francisco, CA 94133",
+          "cuisine": "Italian-Californian",
+          "vibe": "Michelin 3-star, Jackson Square, the most impressive SF meal",
+          "price_range": "$$$$$"
+        },
+        {
+          "name": "Bix",
+          "address": "56 Gold St, San Francisco, CA 94133",
+          "cuisine": "American supper club",
+          "vibe": "Gold Rush-era alley, jazz, intimate booths — legendary",
+          "price_range": "$$$$"
+        },
+        {
+          "name": "Cotogna",
+          "address": "490 Pacific Ave, San Francisco, CA 94133",
+          "cuisine": "Rustic Italian",
+          "vibe": "Jackson Square, wood-fired, beloved by SF finance crowd",
+          "price_range": "$$$"
+        },
+        {
+          "name": "Atelier Crenn",
+          "address": "3127 Fillmore St, San Francisco, CA 94123",
+          "cuisine": "French poetic cuisine",
+          "vibe": "Michelin 3-star, poetic tasting menu, unforgettable",
+          "price_range": "$$$$$"
+        }
+      ],
+      "casual_lunch": [
+        {
+          "name": "The Slanted Door",
+          "address": "1 Ferry Building #3, San Francisco, CA 94105",
+          "cuisine": "Vietnamese",
+          "vibe": "Ferry Building icon, bay views, excellent for a relaxed lunch",
+          "price_range": "$$$"
+        }
+      ],
+      "coffee": [
+        {
+          "name": "Sightglass Coffee — SoMa",
+          "address": "270 7th St, San Francisco, CA 94103",
+          "cuisine": "Specialty coffee",
+          "vibe": "SF institution, high ceilings, great for a real conversation"
+        },
+        {
+          "name": "Ritual Coffee — Hayes Valley",
+          "address": "432B Octavia St, San Francisco, CA 94102",
+          "vibe": "neighborhood gem, quiet enough for business, excellent espresso"
+        }
+      ]
+    }
+  },
+  "outdoor_activities": {
+    "Surfing": {
+      "Los Angeles": [
+        {"name": "Malibu Surfrider Beach", "address": "23000 Pacific Coast Hwy, Malibu, CA 90265", "notes": "Meet at the main lot, iconic first point break"},
+        {"name": "El Porto — Manhattan Beach", "address": "El Porto St & Highland Ave, Manhattan Beach, CA 90266", "notes": "Consistent peaks, easy street parking"}
+      ],
+      "San Diego": [
+        {"name": "Windansea Beach", "address": "6800 Neptune Pl, La Jolla, CA 92037", "notes": "La Jolla classic, rocky but beautiful, suits intermediate surfers"},
+        {"name": "Tourmaline Surf Park", "address": "Tourmaline St, Pacific Beach, CA 92109", "notes": "Mellow longboard break, great for all levels"}
+      ],
+      "Orange County": [
+        {"name": "Salt Creek Beach", "address": "33333 Pacific Coast Hwy, Dana Point, CA 92629", "notes": "Consistent reef break, stunning Ritz-Carlton backdrop"},
+        {"name": "San Onofre State Beach", "address": "San Clemente, CA 92672", "notes": "Old Man's break, fun longboard waves, legendary vibe"}
+      ],
+      "San Francisco": [
+        {"name": "Ocean Beach — Kelly's Cove", "address": "Great Hwy & Balboa St, San Francisco, CA 94121", "notes": "Cold and powerful — suggest wetsuits, serious surfers only"}
+      ]
+    },
+    "Golf": {
+      "Los Angeles": [
+        {"name": "Riviera Country Club", "address": "1250 Capri Dr, Pacific Palisades, CA 90272", "notes": "Iconic PGA Tour host, private — need member guest"},
+        {"name": "Los Angeles Country Club", "address": "10101 Wilshire Blvd, Los Angeles, CA 90024", "notes": "Historic, US Open host, very exclusive"},
+        {"name": "Rancho Park Golf Course", "address": "10460 W Pico Blvd, Los Angeles, CA 90064", "notes": "Public, central location, great condition"}
+      ],
+      "San Diego": [
+        {"name": "Torrey Pines Golf Course", "address": "11480 N Torrey Pines Rd, La Jolla, CA 92037", "notes": "Public, US Open host, stunning coastal cliffs"},
+        {"name": "The Grand Golf Club", "address": "5300 Grand Del Mar Way, San Diego, CA 92130", "notes": "Private Tom Fazio design, adjacent to Addison restaurant"}
+      ],
+      "Orange County": [
+        {"name": "Pelican Hill Golf Club", "address": "22651 Pelican Hill Rd S, Newport Coast, CA 92657", "notes": "Ocean views on every hole, resort course, very impressive"},
+        {"name": "Strawberry Farms Golf Club", "address": "11 Strawberry Farm Rd, Irvine, CA 92612", "notes": "Private, well-regarded OC club"}
+      ],
+      "San Francisco": [
+        {"name": "Harding Park", "address": "99 Harding Rd, San Francisco, CA 94132", "notes": "Championship public course, hosted PGA events"},
+        {"name": "Presidio Golf Course", "address": "300 Finley Rd, San Francisco, CA 94129", "notes": "Historic course inside National Park, stunning setting"}
+      ]
+    },
+    "Hiking": {
+      "Los Angeles": [
+        {"name": "Griffith Park — Mt. Hollywood Trail", "address": "4730 Crystal Springs Dr, Los Angeles, CA 90027", "notes": "Easy 3-mile round trip, city views, iconic"},
+        {"name": "Temescal Canyon — Pacific Palisades", "address": "15601 Sunset Blvd, Pacific Palisades, CA 90272", "notes": "Waterfall, ocean views, moderate 3.8-mile loop"}
+      ],
+      "San Diego": [
+        {"name": "Torrey Pines State Reserve", "address": "12600 N Torrey Pines Rd, La Jolla, CA 92037", "notes": "Coastal bluffs, ancient pine forest, stunning ocean views"},
+        {"name": "Iron Mountain — Poway", "address": "16769 Poway Rd, Poway, CA 92064", "notes": "Panoramic summit views, 5.5 miles, a San Diego classic"}
+      ],
+      "Orange County": [
+        {"name": "Chino Hills State Park", "address": "1879 Jackson St, Chino, CA 91710", "notes": "Rolling hills, wildflowers, very scenic and uncrowded"},
+        {"name": "Aliso and Wood Canyons Wilderness Park", "address": "28373 Alicia Pkwy, Laguna Niguel, CA 92677", "notes": "Laguna Beach area, ocean views from the ridge"}
+      ],
+      "San Francisco": [
+        {"name": "Marin Headlands — Hawk Hill", "address": "Golden Gate National Recreation Area, Sausalito, CA 94965", "notes": "Golden Gate Bridge views, easy access via carpool"},
+        {"name": "Mount Tamalpais State Park", "address": "801 Panoramic Hwy, Mill Valley, CA 94941", "notes": "Best views in the Bay Area, moderate 4-mile loop to summit"}
+      ]
+    },
+    "Mountain Biking": {
+      "Los Angeles": [
+        {"name": "Backbone Trail — Malibu Creek State Park", "address": "1925 Las Virgenes Rd, Calabasas, CA 91302", "notes": "Classic Santa Monica Mountains singletrack"}
+      ],
+      "San Diego": [
+        {"name": "Daley Ranch — Escondido", "address": "3024 La Honda Dr, Escondido, CA 92027", "notes": "Miles of quality singletrack, very scenic, all levels"}
+      ],
+      "Orange County": [
+        {"name": "Aliso and Wood Canyons", "address": "28373 Alicia Pkwy, Laguna Niguel, CA 92677", "notes": "Best mtb riding in OC, Laguna Beach access"}
+      ],
+      "San Francisco": [
+        {"name": "Wilder Ranch State Park", "address": "1401 Coast Rd, Santa Cruz, CA 95060", "notes": "1 hour from SF, incredible coastal singletrack"}
+      ]
+    },
+    "Sailing": {
+      "Los Angeles": [
+        {"name": "Marina del Rey — Main Channel", "address": "13650 Mindanao Way, Marina del Rey, CA 90292", "notes": "Charter from Marina del Rey Yacht Club area"}
+      ],
+      "San Diego": [
+        {"name": "San Diego Bay — Shelter Island", "address": "1880 Harbor Island Dr, San Diego, CA 92101", "notes": "Ideal bay sailing, charter from Shelter Island Marina"}
+      ],
+      "Orange County": [
+        {"name": "Newport Harbor", "address": "Newport Beach, CA 92661", "notes": "Best sailing harbor in SoCal, charter from Balboa Island"}
+      ],
+      "San Francisco": [
+        {"name": "San Francisco Bay — St. Francis Yacht Club", "address": "99 Yacht Rd, San Francisco, CA 94123", "notes": "World-class sailing, steady breeze, Golden Gate backdrop"}
+      ]
+    },
+    "Fishing": {
+      "Los Angeles": [
+        {"name": "Santa Monica Pier Sportfishing", "address": "200 Santa Monica Pier, Santa Monica, CA 90401", "notes": "Half-day charters, easy parking, no license needed on party boats"}
+      ],
+      "San Diego": [
+        {"name": "Seaforth Sportfishing", "address": "1717 Quivira Rd, San Diego, CA 92109", "notes": "San Diego's best sportfishing, full and half-day trips"}
+      ],
+      "Orange County": [
+        {"name": "Davey's Locker Sportfishing", "address": "400 Main St, Balboa, CA 92661", "notes": "Newport Beach classic, yellowtail season June-October"}
+      ],
+      "San Francisco": [
+        {"name": "Fisherman's Wharf Charters", "address": "Pier 45, San Francisco, CA 94133", "notes": "Bay and offshore options, Dungeness crab and halibut"}
+      ]
+    },
+    "Tennis": {
+      "Los Angeles": [
+        {"name": "Riviera Tennis Club", "address": "310 Toyopa Dr, Pacific Palisades, CA 90272", "notes": "Historic clay courts, celebrity-friendly, private"}
+      ],
+      "San Diego": [
+        {"name": "Barnes Tennis Center", "address": "4490 W Point Loma Blvd, San Diego, CA 92107", "notes": "Best public tennis facility in San Diego, Ocean Beach area"}
+      ],
+      "Orange County": [
+        {"name": "Palisades Tennis Club", "address": "1580 S State College Blvd, Anaheim, CA 92806", "notes": "Well-maintained, central OC location"}
+      ],
+      "San Francisco": [
+        {"name": "Golden Gate Park Tennis Courts", "address": "Kezar Dr, San Francisco, CA 94117", "notes": "21 courts, reservations available online, scenic park setting"}
+      ]
+    },
+    "Skiing": {
+      "Los Angeles": [
+        {"name": "Mammoth Mountain", "address": "1 Minaret Rd, Mammoth Lakes, CA 93546", "notes": "4-5 hour drive from LA, best skiing in CA — make it a weekend trip"}
+      ],
+      "San Diego": [
+        {"name": "Big Bear Mountain Resort", "address": "43101 Goldmine Dr, Big Bear Lake, CA 92315", "notes": "2.5 hours from SD, accessible day trip November through April"}
+      ],
+      "Orange County": [
+        {"name": "Big Bear Mountain Resort", "address": "43101 Goldmine Dr, Big Bear Lake, CA 92315", "notes": "2 hours from OC — very popular with OC crowd, early season weekdays best"}
+      ],
+      "San Francisco": [
+        {"name": "Lake Tahoe — Palisades Tahoe", "address": "1960 Squaw Valley Rd, Olympic Valley, CA 96146", "notes": "3.5 hours from SF, world-class skiing, easy to make a full day or weekend"}
+      ]
+    }
+  },
+  "activity_close_modifiers": {
+    "Football": 0.25,
+    "Basketball": 0.22,
+    "Baseball": 0.20,
+    "Golf": 0.15,
+    "Surfing": 0.15,
+    "Sailing": 0.12,
+    "Skiing": 0.12,
+    "Fishing": 0.10,
+    "Hiking": 0.08,
+    "Mountain Biking": 0.08,
+    "Tennis": 0.08,
+    "Lunch": 0.05,
+    "Coffee": 0.00
+  },
+  "activity_to_interest_map": {
+    "Surfing": ["Surfing"],
+    "Golf": ["Golf"],
+    "Sailing": ["Sailing"],
+    "Fishing": ["Fishing"],
+    "Tennis": ["Tennis"],
+    "Skiing": ["Skiing"],
+    "Hiking": ["Hiking", "Mountain Biking", "Running", "Triathlon", "Crossfit"],
+    "Lunch": ["Wine Tasting", "Cooking", "Craft Beer", "Food", "Travel"],
+    "Baseball": ["Baseball"],
+    "Basketball": ["Basketball"],
+    "Football": ["Football"]
+  }
+}

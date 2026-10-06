@@ -1,0 +1,67 @@
+{
+  "_note": "NFL schedules for CA teams — same shape as baseball_schedules.json (teams + schedules keyed by team code). Built incrementally as team schedules are provided.",
+  "teams": {
+    "LAR": { "name": "Los Angeles Rams" },
+    "LAC": { "name": "Los Angeles Chargers" },
+    "SF":  { "name": "San Francisco 49ers" }
+  },
+  "schedules": {
+    "SF": [
+      {"week": 1,  "date": "2026-09-10", "day_of_week": "Thu", "opponent": "LAR", "home": false, "time": "N", "played": true,  "result": "W 27-7"},
+      {"week": 2,  "date": "2026-09-20", "day_of_week": "Sun", "opponent": "MIA", "home": true,  "time": "D", "played": true,  "result": "W 35-13"},
+      {"week": 3,  "date": "2026-09-27", "day_of_week": "Sun", "opponent": "ARI", "home": true,  "time": "D", "played": false},
+      {"week": 4,  "date": "2026-10-04", "day_of_week": "Sun", "opponent": "DEN", "home": true,  "time": "D", "played": false},
+      {"week": 5,  "date": "2026-10-11", "day_of_week": "Sun", "opponent": "SEA", "home": false, "time": "D", "played": false},
+      {"week": 6,  "date": "2026-10-19", "day_of_week": "Mon", "opponent": "WAS", "home": true,  "time": "N", "played": false},
+      {"week": 7,  "date": "2026-10-25", "day_of_week": "Sun", "opponent": "ATL", "home": false, "time": "D", "played": false},
+      {"week": 9,  "date": "2026-11-08", "day_of_week": "Sun", "opponent": "LV",  "home": true,  "time": "D", "played": false},
+      {"week": 10, "date": "2026-11-15", "day_of_week": "Sun", "opponent": "DAL", "home": false, "time": "D", "played": false},
+      {"week": 11, "date": "2026-11-22", "day_of_week": "Sun", "opponent": "MIN", "home": false, "time": "N", "played": false},
+      {"week": 12, "date": "2026-11-29", "day_of_week": "Sun", "opponent": "SEA", "home": true,  "time": "D", "played": false},
+      {"week": 13, "date": "2026-12-06", "day_of_week": "Sun", "opponent": "NYG", "home": false, "time": "D", "played": false},
+      {"week": 14, "date": "2026-12-13", "day_of_week": "Sun", "opponent": "LAR", "home": true,  "time": "D", "played": false},
+      {"week": 15, "date": "2026-12-17", "day_of_week": "Thu", "opponent": "LAC", "home": false, "time": "N", "played": false},
+      {"week": 16, "date": "2026-12-27", "day_of_week": "Sun", "opponent": "KC",  "home": false, "time": "D", "played": false},
+      {"week": 17, "date": "2027-01-03", "day_of_week": "Sun", "opponent": "PHI", "home": true,  "time": "N", "played": false},
+      {"week": 18, "date": "2027-01-09", "day_of_week": "Sat", "opponent": "ARI", "home": false, "time": "TBD", "played": false}
+    ],
+    "LAC": [
+      {"week": 1,  "date": "2026-09-13", "day_of_week": "Sun", "opponent": "ARI", "home": true,  "time": "D", "played": true,  "result": "L 14-26"},
+      {"week": 2,  "date": "2026-09-20", "day_of_week": "Sun", "opponent": "LV",  "home": true,  "time": "D", "played": true,  "result": "L 14-26"},
+      {"week": 3,  "date": "2026-09-27", "day_of_week": "Sun", "opponent": "BUF", "home": false, "time": "D", "played": false},
+      {"week": 4,  "date": "2026-10-04", "day_of_week": "Sun", "opponent": "SEA", "home": false, "time": "D", "played": false},
+      {"week": 5,  "date": "2026-10-11", "day_of_week": "Sun", "opponent": "DEN", "home": true,  "time": "D", "played": false},
+      {"week": 6,  "date": "2026-10-18", "day_of_week": "Sun", "opponent": "KC",  "home": false, "time": "D", "played": false},
+      {"week": 8,  "date": "2026-11-01", "day_of_week": "Sun", "opponent": "LAR", "home": false, "time": "D", "played": false},
+      {"week": 9,  "date": "2026-11-08", "day_of_week": "Sun", "opponent": "HOU", "home": true,  "time": "D", "played": false},
+      {"week": 10, "date": "2026-11-16", "day_of_week": "Mon", "opponent": "BAL", "home": false, "time": "N", "played": false},
+      {"week": 11, "date": "2026-11-22", "day_of_week": "Sun", "opponent": "NYJ", "home": true,  "time": "D", "played": false},
+      {"week": 12, "date": "2026-11-29", "day_of_week": "Sun", "opponent": "NE",  "home": true,  "time": "N", "played": false},
+      {"week": 13, "date": "2026-12-06", "day_of_week": "Sun", "opponent": "TB",  "home": false, "time": "D", "played": false},
+      {"week": 14, "date": "2026-12-13", "day_of_week": "Sun", "opponent": "LV",  "home": false, "time": "D", "played": false},
+      {"week": 15, "date": "2026-12-17", "day_of_week": "Thu", "opponent": "SF",  "home": true,  "time": "N", "played": false},
+      {"week": 16, "date": "2026-12-27", "day_of_week": "Sun", "opponent": "MIA", "home": false, "time": "D", "played": false},
+      {"week": 17, "date": "2027-01-03", "day_of_week": "Sun", "opponent": "KC",  "home": true,  "time": "TBD", "played": false},
+      {"week": 18, "date": "2027-01-09", "day_of_week": "Sat", "opponent": "DEN", "home": false, "time": "TBD", "played": false}
+    ],
+    "LAR": [
+      {"week": 1,  "date": "2026-09-10", "day_of_week": "Thu", "opponent": "SF",  "home": false, "time": "N", "played": true,  "result": "L 7-27"},
+      {"week": 2,  "date": "2026-09-21", "day_of_week": "Mon", "opponent": "NYG", "home": true,  "time": "N", "played": true,  "result": "W 28-6"},
+      {"week": 3,  "date": "2026-09-27", "day_of_week": "Sun", "opponent": "DEN", "home": false, "time": "N", "played": false},
+      {"week": 4,  "date": "2026-10-04", "day_of_week": "Sun", "opponent": "PHI", "home": false, "time": "D", "played": false},
+      {"week": 5,  "date": "2026-10-12", "day_of_week": "Mon", "opponent": "BUF", "home": true,  "time": "N", "played": false},
+      {"week": 6,  "date": "2026-10-18", "day_of_week": "Sun", "opponent": "ARI", "home": true,  "time": "D", "played": false},
+      {"week": 7,  "date": "2026-10-25", "day_of_week": "Sun", "opponent": "LV",  "home": false, "time": "D", "played": false},
+      {"week": 8,  "date": "2026-11-01", "day_of_week": "Sun", "opponent": "LAC", "home": true,  "time": "D", "played": false},
+      {"week": 9,  "date": "2026-11-08", "day_of_week": "Sun", "opponent": "WAS", "home": false, "time": "D", "played": false},
+      {"week": 10, "date": "2026-11-15", "day_of_week": "Sun", "opponent": "ARI", "home": false, "time": "D", "played": false},
+      {"week": 12, "date": "2026-11-25", "day_of_week": "Wed", "opponent": "GB",  "home": true,  "time": "N", "played": false},
+      {"week": 13, "date": "2026-12-03", "day_of_week": "Thu", "opponent": "KC",  "home": true,  "time": "N", "played": false},
+      {"week": 14, "date": "2026-12-13", "day_of_week": "Sun", "opponent": "SF",  "home": false, "time": "D", "played": false},
+      {"week": 15, "date": "2026-12-20", "day_of_week": "Sun", "opponent": "DAL", "home": true,  "time": "D", "played": false},
+      {"week": 16, "date": "2026-12-25", "day_of_week": "Fri", "opponent": "SEA", "home": false, "time": "N", "played": false},
+      {"week": 17, "date": "2027-01-03", "day_of_week": "Sun", "opponent": "TB",  "home": false, "time": "TBD", "played": false},
+      {"week": 18, "date": "2027-01-09", "day_of_week": "Sat", "opponent": "SEA", "home": true,  "time": "TBD", "played": false}
+    ]
+  }
+}

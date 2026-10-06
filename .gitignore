@@ -1,3 +1,8 @@
 # Backup copies kept alongside edited scripts (e.g. generate_sample_orders_bak.py)
 # — useful to keep on disk, but shouldn't clutter the repo history.
 *_bak.py
+__pycache__/
+*_BEFORE_*
+*.bak-*
+data/
+reports/
