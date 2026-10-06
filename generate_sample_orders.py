@@ -66,6 +66,36 @@ def load_json(path, label):
         return json.load(f)
 
 
+def compute_blocked_buys(max_order):
+    """
+    Tickers Neptune would pre-reject a BUY for on concentration grounds:
+    already at/over the weight limit for its asset type (equity 10%, ETF 15%
+    in neptune_config.json), or close enough that a max-size order would
+    tip it over. Returns {ticker: reason}. Mirrors neptune.py's check so the
+    generator doesn't propose orders that are certain to bounce.
+    """
+    holdings = load_json(HOLDINGS_FILE, "neptune_holdings.json")
+    config   = load_json(CONFIG_FILE, "neptune_config.json") or {}
+    if not holdings:
+        return {}
+    pl = config.get("position_limits", {})
+    lim_eq  = float(pl.get("max_equity_position_pct", pl.get("max_single_position_pct", 10.0)))
+    lim_etf = float(pl.get("max_etf_position_pct", 15.0))
+    total = holdings.get("summary", {}).get("total_portfolio_value", 0)
+    if not total:
+        return {}
+    blocked = {}
+    for ticker, p in holdings.get("positions", {}).items():
+        limit = lim_etf if p.get("asset_type") == "etf" else lim_eq
+        mv    = p.get("market_value", 0)
+        pct   = mv / total * 100
+        if pct > limit:
+            blocked[ticker] = f"{pct:.2f}% is over the {limit:.0f}% limit"
+        elif (mv + max_order) / total * 100 > limit:
+            blocked[ticker] = f"{pct:.2f}% — a ${max_order:,.0f} buy would exceed the {limit:.0f}% limit"
+    return blocked
+
+
 def get_holdings_tickers():
     holdings = load_json(HOLDINGS_FILE, "neptune_holdings.json")
     if not holdings:
@@ -90,7 +120,8 @@ def get_verdict_from_research(research_data, ticker):
 
 
 def generate_jupiter_orders(rankings_data, research_data, holdings_tickers,
-                             max_orders=8, include_sells=True, order_range=None):
+                             max_orders=8, include_sells=True, order_range=None,
+                             blocked_buys=None):
     """
     Generate BUY orders for ACCUMULATE-ranked tickers,
     SELL orders for AVOID-ranked tickers that are currently held.
@@ -100,6 +131,7 @@ def generate_jupiter_orders(rankings_data, research_data, holdings_tickers,
     _FALLBACK_ORDER_RANGE if not provided.
     """
     order_range = order_range or _FALLBACK_ORDER_RANGE
+    blocked_buys = blocked_buys or {}
     orders = []
 
     if not rankings_data:
@@ -114,6 +146,9 @@ def generate_jupiter_orders(rankings_data, research_data, holdings_tickers,
         ]
         for ticker, action, rationale in fallback:
             if action == "SELL" and ticker not in holdings_tickers:
+                continue
+            if action == "BUY" and ticker in blocked_buys:
+                print(f"  ⛔ {ticker}: BUY not proposed — {blocked_buys[ticker]}")
                 continue
             amount = round(random.uniform(*order_range) / 100) * 100
             orders.append({
@@ -167,6 +202,9 @@ def generate_jupiter_orders(rankings_data, research_data, holdings_tickers,
             strengths = entry.get("strengths", [])
             risks     = entry.get("risks", [])
 
+            if verdict == "ACCUMULATE" and ticker in blocked_buys:
+                print(f"  ⛔ {ticker}: ACCUMULATE but BUY not proposed — {blocked_buys[ticker]}")
+                continue
             if verdict == "ACCUMULATE":
                 rationale = (f"ACCUMULATE (rank {entry.get('rank','?')}, "
                              f"score {entry.get('score','?')}): {one_liner}")
@@ -332,7 +370,7 @@ def _parse_cot_extreme(cot_text, asset_prefix):
     return {"net": net, "direction": direction, "extreme": extreme}
 
 
-def generate_mercury_orders(mercury_data, holdings_tickers, order_range=None):
+def generate_mercury_orders(mercury_data, holdings_tickers, order_range=None, blocked_buys=None):
     """
     Generate BUY/SELL orders for IAU, VDE, BITQ from Mercury's actual
     quantitative data in mercury_latest.json (data.etf_data momentum,
@@ -341,6 +379,7 @@ def generate_mercury_orders(mercury_data, holdings_tickers, order_range=None):
     clear signal simply gets no order.
     """
     order_range = order_range or _FALLBACK_ORDER_RANGE
+    blocked_buys = blocked_buys or {}
     orders = []
     ts = datetime.now().strftime('%Y%m%d%H%M%S')
 
@@ -373,7 +412,9 @@ def generate_mercury_orders(mercury_data, holdings_tickers, order_range=None):
         cot_blocks_buy = bool(cot and cot["extreme"] and cot["direction"] == "LONG")
 
         action, decision_note = None, ""
-        if bullish_momentum and stance != "bearish" and not cot_blocks_buy:
+        if bullish_momentum and stance != "bearish" and not cot_blocks_buy and ticker in blocked_buys:
+            decision_note = f" No buy: position {blocked_buys[ticker]}."
+        elif bullish_momentum and stance != "bearish" and not cot_blocks_buy:
             action = "BUY"
         elif bullish_momentum and cot_blocks_buy:
             decision_note = " No buy signal: crowded EXTREME net-long positioning against the momentum."
@@ -439,19 +480,23 @@ def main():
     research_data = load_json(os.path.join(DATA_DIR, "research_latest.json"), "research_latest.json")
     mercury_data  = load_json(os.path.join(DATA_DIR, "mercury_latest.json"),  "mercury_latest.json")
     holdings_tickers = get_holdings_tickers()
+    blocked_buys = compute_blocked_buys(order_range[1])
 
     print(f"\n📋 Holdings positions loaded: {len(holdings_tickers)}")
+    if blocked_buys:
+        print("⛔ BUYs blocked by concentration limits: "
+              + ", ".join(f"{t} ({r})" for t, r in blocked_buys.items()))
 
     print(f"\n🪐 Generating Jupiter orders (equity)...")
     jupiter_orders = generate_jupiter_orders(
         rankings_data, research_data, holdings_tickers,
         max_orders=args.max_orders, include_sells=include_sells,
-        order_range=order_range
+        order_range=order_range, blocked_buys=blocked_buys
     )
     print(f"   Generated: {len(jupiter_orders)} orders")
 
     print(f"\n⚡ Generating Mercury orders (ETF proxies)...")
-    mercury_orders = generate_mercury_orders(mercury_data, holdings_tickers, order_range=order_range)
+    mercury_orders = generate_mercury_orders(mercury_data, holdings_tickers, order_range=order_range, blocked_buys=blocked_buys)
     print(f"   Generated: {len(mercury_orders)} orders")
 
     all_orders = jupiter_orders + mercury_orders

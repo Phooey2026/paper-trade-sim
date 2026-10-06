@@ -7,8 +7,8 @@ For each outbox email at pipeline_week == 3 (meeting confirmed):
   - Calculates close probability from: warm lead, book size, tier, activity modifier
   - Rolls the dice
   - Generates a 200-250 word narrative of the meeting (win or loss)
-  - On a CLOSE: calculates deal value (2% of AUM), injects cash into 
-    neptune_holdings.json VMRXX, updates FA status to CLIENT in crm_advisors.json
+  - On a CLOSE: calculates deal value (2% of AUM), opens new client accounts at NAV
+    (venus_new_clients.py: shares issued, cash added, NAV refreshed), updates FA status to CLIENT
   - Updates pipeline_state.json
 """
 
@@ -42,6 +42,15 @@ _holdings_local  = os.path.join(SCRIPT_DIR, "neptune_holdings.json")
 HOLDINGS_FILE    = _holdings_parent if os.path.exists(_holdings_parent) else _holdings_local
 
 DEAL_PCT      = 0.02   # 2% of AUM
+
+# A close creates new client accounts at the current NAV (see venus_new_clients.py).
+# nav_engine.py / neptune_holdings.json live in paper_trade/ (parent of venus/)
+try:
+    import venus_new_clients as _newc
+except ImportError:
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location("venus_new_clients", os.path.join(SCRIPT_DIR, "venus_new_clients.py"))
+    _newc = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_newc)
 
 
 # ── Close Probability Calculation ─────────────────────────────────────────
@@ -174,91 +183,41 @@ NARRATIVE STYLE:
             f"Met {fa['first_name']} {fa['last_name']} at {venue_name} on {meet_date}. "
             f"We had a good {activity.lower()} and discussed the OCRFF performance story. "
             f"{fa['first_name']} was {'receptive and committed to moving forward' if closed else 'engaged but not ready to commit today'}. "
-            f"{'Deal value: $' + f'{deal_value:,.0f}' + ' added to VMRXX.' if closed else 'Will follow up next quarter.'}"
+            f"{'Deal value: $' + f'{deal_value:,.0f}' + ' opened across new client accounts.' if closed else 'Will follow up next quarter.'}"
         )
 
 
 # ── Holdings Update ───────────────────────────────────────────────────────
-
-def inject_cash_to_vmrxx(deal_value, fa_name, narrative_snippet):
-    """
-    Add deal value to the cash position in neptune_holdings.json.
-    Cash is tracked in summary.cash_value (not as a position entry).
-    An inflow_log is appended to summary to record each new client deposit.
-    """
-    if not os.path.exists(HOLDINGS_FILE):
-        print(f"   ⚠️  {HOLDINGS_FILE} not found — skipping cash injection")
-        return False
-
-    with open(HOLDINGS_FILE) as f:
-        holdings = json.load(f)
-
-    positions = holdings.get("positions", {})
-    summary   = holdings.get("summary", {})
-
-    # Cash lives in summary.cash_value, not as a position
-    old_cash   = summary.get("cash_value", 0)
-    new_cash   = round(old_cash + deal_value, 2)
-
-    # Append to inflow log (stored on summary)
-    summary.setdefault("inflow_log", []).append({
-        "date":   datetime.now().strftime("%Y-%m-%d"),
-        "amount": round(deal_value, 2),
-        "source": f"New client: {fa_name}",
-        "memo":   narrative_snippet[:100],
-    })
-
-    # Recompute summary totals
-    total_equity = sum(p["market_value"] for p in positions.values()
-                       if p.get("asset_type") == "equity")
-    total_etf    = sum(p["market_value"] for p in positions.values()
-                       if p.get("asset_type") == "etf")
-    total_inv    = round(total_equity + total_etf, 2)
-    total_port   = round(total_inv + new_cash, 2)
-    total_cb     = round(sum(p.get("cost_basis", 0) for p in positions.values()), 2)
-    total_gl     = round(sum(p.get("gain_loss", 0) for p in positions.values()), 2)
-    gl_pct       = round((total_gl / total_cb) * 100, 2) if total_cb else 0.0
-
-    summary.update({
-        "cash_value":            new_cash,
-        "total_portfolio_value": total_port,
-        "total_invested":        total_inv,
-        "total_equity_value":    round(total_equity, 2),
-        "total_etf_value":       round(total_etf, 2),
-        "cash_pct":              round((new_cash / total_port) * 100, 4) if total_port else 0,
-        "total_cost_basis":      total_cb,
-        "total_gain_loss":       total_gl,
-        "total_gain_loss_pct":   gl_pct,
-    })
-    holdings["last_updated"] = datetime.now().strftime("%Y-%m-%d")
-
-    with open(HOLDINGS_FILE, "w") as f:
-        json.dump(holdings, f, indent=2)
-
-    return True
+# Cash is no longer injected on its own. venus_new_clients.apply_close() creates the new
+# client accounts, issues their shares at NAV, adds the cash and refreshes the NAV together,
+# so a close can never move the NAV.
 
 
-def update_fa_status_to_client(fa_id, deal_value, pipeline_record):
-    """Update FA status to CLIENT in crm_advisors.json with full pipeline history."""
+def update_fa_status_to_client(fa_id, deal_value, pipeline_record, account_ids=None):
+    """Mark the FA a CLIENT in crm_advisors.json. AUM and client count ADD to what is already there."""
     with open(CRM_FILE) as f:
         crm = json.load(f)
 
+    account_ids = account_ids or []
     for fa in crm["advisors"]:
         if fa["fa_id"] == fa_id:
             fa["status"]     = "CLIENT"
-            fa["oc_aum"]     = round(deal_value, 2)
-            fa["oc_clients"] = 1
+            fa["oc_aum"]     = round((fa.get("oc_aum") or 0) + deal_value, 2)
+            fa["oc_clients"] = (fa.get("oc_clients") or 0) + (len(account_ids) or 1)
+            fa["oc_account_ids"] = sorted(set(fa.get("oc_account_ids", [])) | set(account_ids))
             fa["notes"]      = (
                 f"Converted {datetime.now().strftime('%Y-%m-%d')} via "
                 f"{pipeline_record.get('meeting_activity', 'meeting')} at "
                 f"{pipeline_record.get('meeting_venue', 'TBD')}. "
-                f"Initial allocation: ${deal_value:,.0f}."
+                f"Allocation: ${deal_value:,.0f} across {len(account_ids) or 1} new client account(s)."
             )
             fa["pipeline_history"] = pipeline_record
             break
 
-    with open(CRM_FILE, "w") as f:
+    tmp = CRM_FILE + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(crm, f, indent=2)
+    os.replace(tmp, CRM_FILE)
 
 
 # ── Pipeline State ────────────────────────────────────────────────────────
@@ -384,14 +343,22 @@ def run(dry_run=False, verbose=False):
         if closed:
             closes    += 1
             total_aum += deal_value
-            print(f"   💰 Injecting ${deal_value:,.0f} into VMRXX...")
+            print(f"   💰 Opening new client accounts for ${deal_value:,.0f} at NAV...")
 
             if not dry_run:
-                injected = inject_cash_to_vmrxx(
-                    deal_value, fa["name"], narrative[:100]
-                )
-                if injected:
-                    print(f"   ✅ VMRXX updated")
+                try:
+                    res = _newc.apply_close(fa, deal_value, narrative[:100])
+                except Exception as e:
+                    # nothing was written (apply_close rolls back) → don't count it as a close
+                    print(f"   ❌ Could not book the close: {e} — recorded as NOT closed, rerun week 4")
+                    closes -= 1
+                    total_aum -= deal_value
+                    continue
+                ids = [a["account_id"] for a in res["accounts"]]
+                print(f"   ✅ {len(ids)} accounts: {', '.join(ids)}  "
+                      f"({res['shares_issued']:,.4f} shares @ NAV ${res['nav_before']:,.4f}; "
+                      f"NAV after ${res['nav_after']:,.4f})")
+                meeting_outcome["new_accounts"] = ids
 
                 update_fa_status_to_client(fa_id, deal_value, {
                     **pipeline_rec,
@@ -400,7 +367,7 @@ def run(dry_run=False, verbose=False):
                     "meeting_date":     confirmed.get("date", ""),
                     "deal_value":       deal_value,
                     "narrative":        narrative,
-                })
+                }, account_ids=ids)
                 print(f"   ✅ {fa['name']} → CLIENT in CRM")
 
         if not dry_run:

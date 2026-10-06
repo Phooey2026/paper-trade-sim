@@ -82,6 +82,7 @@ def select_confirmed_option(proposal):
         "venue_name":    proposal.get("venue_name", "a local spot"),
         "venue_address": proposal.get("venue_address", ""),
         "venue_details": proposal.get("venue_details", {}),
+        "slot":          proposal.get("slot"),          # the game's own date/time (None → not a game)
     }
     alt_options = proposal.get("alt_options", [])
     if not alt_options:
@@ -92,6 +93,7 @@ def select_confirmed_option(proposal):
             "venue_name":    alt.get("venue_name", "a local spot"),
             "venue_address": alt.get("venue_address", ""),
             "venue_details": {},  # alt_options only carry name/address — see venus_week2.py
+            "slot":          alt.get("slot"),
         }
         for alt in alt_options
     ]
@@ -117,15 +119,20 @@ def build_confirmation_prompt(rec, fa, calendar):
     follow_up       = rec.get("follow_up_body", "")
     fa_reply        = rec.get("response_body", "")
 
-    # Pre-select the slot randomly — don't let the LLM decide, it always picks the last one
-    selected_slot = _random.choice(open_slots) if open_slots else None
+    # A game meeting is pinned to the game's own date/time (carried on the chosen option).
+    # Anything else gets a randomly pre-selected open slot — don't let the LLM decide, it always picks the last one.
+    game_slot = confirmed_option.get("slot")
+    if game_slot:
+        selected_slot = game_slot
+    else:
+        selected_slot = _random.choice(open_slots) if open_slots else None
     confirmed_day  = selected_slot["day"]  if selected_slot else "Monday"
     confirmed_date = selected_slot["date"] if selected_slot else ""
     confirmed_time = selected_slot["time"] if selected_slot else "10:30 AM"
 
     # Calendar summary for context
     cal_summary = ""
-    if calendar:
+    if calendar and not game_slot:     # a game on another week isn't on this week's calendar
         cal_entries = []
         for day, events in calendar.get("calendar", {}).items():
             for ev in events:
@@ -155,7 +162,7 @@ YOUR PREVIOUS REPLY (for context):
 
 MEETING CONFIRMED:
 Activity: {activity} at {venue_name}
-You are available on {confirmed_day}, {confirmed_date} at {confirmed_time}.
+{("The game is on " + confirmed_day + ", " + confirmed_date + (", starting around " if selected_slot and selected_slot.get("time_estimated") else ", starting at ") + confirmed_time + ". You're free that day. The date is fixed by the schedule — do not suggest a different day.") if game_slot else ("You are available on " + confirmed_day + ", " + confirmed_date + " at " + confirmed_time + ".")}
 {cal_summary}
 {"NOTE: Venus's email offered more than one live game to choose from — you picked " + activity + ". Feel free to briefly mention that's the one you're excited about." if had_choice else ""}
 

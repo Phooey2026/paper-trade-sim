@@ -8,6 +8,7 @@ Usage:
     python3 build_orbit_dashboard.py --output /path/output.html
 """
 
+import html as _html
 import json, os, glob, argparse
 from datetime import datetime
 
@@ -38,6 +39,9 @@ def load_all_runs():
 def load_escalations():
     data = load_json(ESC_FILE)
     return data.get("escalations", []) if data else []
+
+def esc(v):
+    return _html.escape(str(v if v is not None else ""), quote=True)
 
 def fmt_money(v):
     return f"${float(v or 0):,.2f}"
@@ -76,7 +80,7 @@ def build_issue_cards(results):
             status_html = '<span class="badge-escalated">⚡ ESCALATED → NEPTUNE → ✅ RESOLVED</span>'
             card_border = "card-escalated"
         elif pending:
-            status_html = '<span class="badge-pending">⏳ PENDING AUTHORIZATION</span>'
+            status_html = '<span class="badge-pending" title="Status when this issue was processed. Live paperwork queue: Forms tab.">⏳ AUTH REQUESTED (when processed)</span>'
             card_border = "card-pending"
         elif r.get("error"):
             status_html = '<span class="badge-error">❌ ERROR</span>'
@@ -245,12 +249,207 @@ def build_statements_tab(results):
     return "\n".join(cards)
 
 
-def generate_html(results, escalations, generated_at):
+CLIENTS_FILE = os.path.join(PAPER_DIR, "venus", "crm_clients.json")
+
+
+def load_form_runs():
+    """Form results from every saved run (newest first)."""
+    out = []
+    for rf in sorted(glob.glob(os.path.join(OUTBOX_DIR, "orbit_run_*.json")), reverse=True):
+        try:
+            data = load_json(rf) or {}
+            for r in data.get("form_results", []) or []:
+                r["_run_date"] = data.get("run_date", "")[:16].replace("T", " ")
+                r["_mode"] = data.get("form_mode", "")
+                out.append(r)
+        except Exception:
+            pass
+    return out
+
+
+def _thumb(path, width=300):
+    """Small embedded JPEG so the dashboard is portable; link points at the full-size file."""
+    import base64, io
+    if not path or not os.path.isfile(path):
+        return ""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            im = im.convert("RGB")
+            im.thumbnail((width, int(width * 1.5)))
+            buf = io.BytesIO()
+            im.save(buf, "JPEG", quality=70)
+        return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return ""
+
+
+def _chips(items, cls):
+    return "".join('<span class="chip %s">%s</span>' % (cls, esc(i)) for i in items) or '<span class="muted">-</span>'
+
+
+def build_forms_tab(form_results):
+    crm = load_json(CLIENTS_FILE) or {"clients": []}
+    queue = {}
+    for c in crm["clients"]:
+        for k, p in (c.get("pending_changes") or {}).items():
+            if isinstance(p, dict) and p.get("status"):
+                queue[p["status"]] = queue.get(p["status"], 0) + 1
+
+    ok = [r for r in form_results if r.get("decision")]
+    applied = sum(1 for r in ok if r.get("outcome") == "APPLIED")
+    returned = sum(1 for r in ok if r.get("outcome") == "RETURNED")
+    inj = sum(len(r["score"]["injected"]) for r in ok)
+    det = sum(len(r["score"]["detected"]) for r in ok)
+    extra = sum(len(r["score"]["extra"]) for r in ok)
+    missed = sum(len(r["score"]["missed"]) for r in ok)
+    planted_forms = sum(1 for r in ok if r["score"]["injected"])
+    cost = 0.0
+    for r in ok:
+        try:
+            cost += float(((r.get("reader") or {}).get("cost")) or 0)
+        except Exception:
+            pass
+
+    summary = """
+    <div class="fscore">
+      <div class="fs"><div class="fl">Forms reviewed</div><div class="fv">%d</div></div>
+      <div class="fs g"><div class="fl">Approved &rarr; CRM changed</div><div class="fv">%d</div></div>
+      <div class="fs r"><div class="fl">Returned</div><div class="fv">%d</div></div>
+      <div class="fs p"><div class="fl">Planted defects caught</div><div class="fv">%d / %d</div></div>
+      <div class="fs o"><div class="fl">Planted defects missed</div><div class="fv">%d</div></div>
+      <div class="fs o"><div class="fl">Unplanted flaws found</div><div class="fv">%d</div></div>
+      <div class="fs"><div class="fl">Queue now</div><div class="fv sm">%s</div></div>
+    </div>
+    <div class="fnote">Planted = defects form_agent injected on purpose (a share of forms set by --defect-rate; none when it is 0). Unplanted = flaws the image
+    model made by accident (blank signature box, garbled date, wrong box) &mdash; Orbit rejects those too.
+    Review-model cost in these runs: $%.3f.</div>""" % (
+        len(ok), applied, returned, det, inj, missed, extra,
+        " &middot; ".join("%s %d" % (k.replace("_", " ").title(), v) for k, v in sorted(queue.items())) or "empty",
+        cost)
+
+    if not form_results:
+        return summary + """<div class="empty-state"><div class="empty-icon">📎</div>
+        <div>No forms processed yet.</div><code>python3 orbit.py --forms mock</code></div>"""
+
+    cards = []
+    for r in form_results:
+        img = r.get("image_path") or ""
+        th = _thumb(img)
+        rel = os.path.relpath(img, SCRIPT_DIR) if img and os.path.isfile(img) else ""
+        pic = ('<a href="%s" target="_blank"><img src="%s" alt="form"></a>' % (esc(rel), th)) if th else \
+              '<div class="nopic">no image</div>'
+        outcome = r.get("outcome", "?")
+        badge = {"APPLIED": "ok", "RETURNED": "bad", "DEFERRED": "wait", "ERROR": "bad"}.get(outcome, "wait")
+        sc = r.get("score") or {"injected": [], "detected": [], "missed": [], "extra": []}
+        kind = r.get("kind", "")
+        body = []
+        if r.get("change"):
+            body.append('<div class="ba"><span class="muted">Before</span> %s<br><span class="muted">After&nbsp;</span> %s</div>'
+                        % (esc(r["change"]["before"]), esc(r["change"]["after"])))
+        for f in r.get("findings") or []:
+            body.append('<div class="find">✗ <b>%s</b> — %s</div>' % (esc(f["code"]), esc(f["detail"])))
+        if r.get("error") or r.get("note"):
+            body.append('<div class="find">%s</div>' % esc(r.get("error") or r.get("note")))
+        notes = [str(c) for c in (r.get("concerns") or []) if "future" not in str(c).lower()]  # model thinks 2026 is the future
+        if notes:
+            body.append('<div class="muted">Reader noted: %s</div>' % esc("; ".join(notes)[:300]))
+        if r.get("read_disagreement"):
+            body.append('<div class="muted">⚠ The two reads disagreed on: %s</div>' % esc(", ".join(r["read_disagreement"])))
+        chips = ""
+        if r.get("score") and (sc["injected"] or sc["extra"]):
+            chips = ('<div class="chips"><span class="clab">planted</span>%s<span class="clab">caught</span>%s'
+                     '<span class="clab">missed</span>%s<span class="clab">unplanted</span>%s</div>') % (
+                _chips(sc["injected"], "plant"), _chips(sc["detected"], "hit"),
+                _chips(sc["missed"], "miss"), _chips(sc["extra"], "extra"))
+        letter = r.get("letter") or ""
+        rerq = r.get("re_request_letter") or ""
+        letters = ""
+        if rerq:
+            letters += '<details><summary>Orbit re-request note</summary><pre>%s</pre></details>' % esc(rerq)
+        if letter:
+            letters += '<details><summary>Orbit letter</summary><pre>%s</pre></details>' % esc(letter)
+        cards.append("""
+        <div class="fcard">
+          <div class="fpic">%s</div>
+          <div class="fbody">
+            <div class="fhead"><span>%s <b>%s</b> · %s</span><span class="fbadge %s">%s</span></div>
+            <div class="muted">%s · attempt %s · %s%s · %s</div>
+            %s%s%s
+          </div>
+        </div>""" % (pic, "📮" if kind == "address" else "👤", esc(r.get("client_name", "")), kind,
+                     badge, esc(outcome), esc(r.get("account_id", "")), r.get("attempt", ""),
+                     esc(r.get("form_id", "") or ""), " · legacy request" if r.get("legacy") else "",
+                     esc(r.get("_run_date", "")), "".join(body), chips, letters))
+    return summary + '<div class="fgrid">' + "".join(cards) + "</div>"
+
+
+def build_history_tab():
+    crm = load_json(CLIENTS_FILE) or {"clients": []}
+    rows = []
+    for c in crm["clients"]:
+        for h in c.get("change_history") or []:
+            rows.append((h.get("effective_at", ""), c, h))
+    rows.sort(key=lambda t: t[0], reverse=True)
+    if not rows:
+        return '<div class="empty-state"><div class="empty-icon">🗂</div><div>No approved changes yet.</div></div>'
+
+    def show(field, v):
+        if field == "address" and isinstance(v, dict):
+            return fmt_addr(v)
+        if field == "beneficiary" and isinstance(v, list):
+            return "; ".join("%s (%s) %g%%%s" % (b.get("name"), b.get("relationship"), b.get("percent", 0),
+                                                 "" if b.get("type") == "primary" else " [contingent]") for b in v)
+        return str(v)
+
+    def fmt_addr(a):
+        return "%s%s, %s %s %s" % (a.get("street", ""), (" " + a["unit"]) if a.get("unit") else "",
+                                   a.get("city", ""), a.get("state", ""), a.get("zip", ""))
+    body = "".join("""<tr><td class='muted'>%s</td><td><b>%s</b><div class='muted'>%s</div></td><td>%s</td>
+        <td>%s</td><td>%s</td><td class='muted'>%s</td></tr>""" % (
+        esc(t[0][:16].replace("T", " ")), esc(t[1]["name"]), esc(t[1]["account_id"]), esc(t[2]["field"]),
+        esc(show(t[2]["field"], t[2].get("old"))), esc(show(t[2]["field"], t[2].get("new"))),
+        esc(t[2].get("source_form_id") or "")) for t in rows[:200])
+    return """<div class="table-wrap"><table><thead><tr><th>When</th><th>Client</th><th>Field</th><th>Before</th>
+        <th>After</th><th>Source form</th></tr></thead><tbody>%s</tbody></table></div>""" % body
+
+
+FORMS_CSS = """
+.fscore{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.fs{background:var(--bg2);border:1px solid var(--border);border-top:2px solid var(--border);border-radius:8px;padding:10px 14px;min-width:120px}
+.fs.g{border-top-color:var(--green)}.fs.r{border-top-color:var(--red)}.fs.p{border-top-color:var(--purple)}.fs.o{border-top-color:var(--esc)}
+.fl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.fv{font-size:20px;font-weight:700;margin-top:3px}.fv.sm{font-size:12px;font-weight:600;margin-top:6px}
+.fnote{font-size:11px;color:var(--muted);margin:4px 0 14px;max-width:900px;line-height:1.5}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(520px,1fr));gap:12px}
+.fcard{display:flex;gap:12px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px}
+.fpic img{width:150px;border-radius:4px;border:1px solid var(--border);display:block}
+.fpic .nopic{width:150px;height:200px;display:flex;align-items:center;justify-content:center;color:var(--muted);border:1px dashed var(--border);border-radius:4px}
+.fbody{flex:1;min-width:0;font-size:12px;line-height:1.45}
+.fhead{display:flex;justify-content:space-between;gap:8px;margin-bottom:2px}
+.fbadge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;height:fit-content}
+.fbadge.ok{background:var(--green-dim);color:var(--green)}.fbadge.bad{background:var(--red-dim);color:var(--red)}.fbadge.wait{background:var(--bg4);color:var(--muted)}
+.ba{margin:6px 0;padding:6px 8px;background:var(--bg3);border-radius:4px;word-break:break-word}
+.find{margin:3px 0;color:#ffb1ab}
+.chips{margin-top:6px;line-height:1.9}.clab{font-size:9px;text-transform:uppercase;color:var(--muted);margin:0 4px 0 8px}
+.chip{font-size:10px;padding:1px 7px;border-radius:9px;margin-right:3px;background:var(--bg4)}
+.chip.plant{background:#2d2a4a;color:var(--purple)}.chip.hit{background:var(--green-dim);color:var(--green)}
+.chip.miss{background:#4a2d1a;color:var(--esc)}.chip.extra{background:#4a3d1a;color:var(--gold)}
+.fbody details{margin-top:6px}.fbody summary{cursor:pointer;color:var(--orbit);font-size:11px}
+.fbody pre{white-space:pre-wrap;font-family:inherit;background:var(--bg3);padding:8px;border-radius:4px;margin-top:4px}
+@media(max-width:640px){.fgrid{grid-template-columns:1fr}.fcard{flex-direction:column}.fpic img{width:100%}}
+"""
+
+
+def generate_html(results, escalations, generated_at, form_results=None):
     total       = len(results)
     orders      = sum(1 for r in results if r.get("issue_type") in ("buy","sell","full_close"))
     escalated   = len(escalations)
     stmts       = sum(1 for r in results if r.get("statement_file"))
-    pending     = sum(1 for r in results if r.get("pending"))
+    # live count: changes still waiting on paperwork (APPLIED ones are done) — not a tally of old issues
+    _crm = load_json(CLIENTS_FILE) or {"clients": []}
+    pending = sum(1 for _c in _crm["clients"] for _p in (_c.get("pending_changes") or {}).values()
+                  if (_p.get("status") if isinstance(_p, dict) else _p) in ("AWAITING_FORM", "FORM_RECEIVED", "RETURNED"))
     full_closes = sum(1 for r in results if r.get("issue_type") == "full_close")
     compliance  = sum(1 for r in results if r.get("policy_applied") == "TOP_5_ONLY")
 
@@ -258,6 +457,8 @@ def generate_html(results, escalations, generated_at):
     esc_tab        = build_escalations_tab(escalations)
     txn_tab        = build_transactions_tab(results)
     stmt_tab       = build_statements_tab(results)
+    forms_tab      = build_forms_tab(form_results or [])
+    history_tab    = build_history_tab()
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -403,6 +604,7 @@ tbody tr:hover td{{background:var(--bg3);}}
 
 .footer{{padding:14px 24px;font-size:10px;color:var(--muted);
          border-top:1px solid var(--border2);margin-top:24px;}}
+{FORMS_CSS}
 </style>
 </head>
 <body>
@@ -447,7 +649,7 @@ tbody tr:hover td{{background:var(--bg3);}}
     <div class="score-value">{compliance}</div>
   </div>
   <div class="score-card">
-    <div class="score-label">Pending Auth</div>
+    <div class="score-label">Pending Auth (live)</div>
     <div class="score-value">{pending}</div>
   </div>
 </div>
@@ -457,12 +659,16 @@ tbody tr:hover td{{background:var(--bg3);}}
   <button class="tab" onclick="showTab('escalations',this)">⚡ Escalations</button>
   <button class="tab" onclick="showTab('transactions',this)">💸 Transactions</button>
   <button class="tab" onclick="showTab('statements',this)">📄 Statements</button>
+  <button class="tab" onclick="showTab('forms',this)">📎 Forms</button>
+  <button class="tab" onclick="showTab('history',this)">🗂 Change History</button>
 </div>
 
 <div id="issues"       class="panel active">{issue_cards}</div>
 <div id="escalations"  class="panel">{esc_tab}</div>
 <div id="transactions" class="panel">{txn_tab}</div>
 <div id="statements"   class="panel">{stmt_tab}</div>
+<div id="forms"        class="panel">{forms_tab}</div>
+<div id="history"      class="panel">{history_tab}</div>
 
 <div class="footer">
   Orbit Client Services Agent &nbsp;·&nbsp; Obsidian Capital &nbsp;·&nbsp;
@@ -497,7 +703,9 @@ def main():
     print(f"⚡ Escalations  : {len(escalations)}")
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-    html = generate_html(results, escalations, generated_at)
+    form_results = load_form_runs()
+    print(f"📎 Form reviews : {len(form_results)}")
+    html = generate_html(results, escalations, generated_at, form_results)
 
     with open(args.output, "w") as f:
         f.write(html)

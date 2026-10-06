@@ -1,0 +1,65 @@
+{
+  "_comment": "Neptune Paper Trading Configuration \u2014 OC-CLIENT-001 \u2014 $212M fund scale",
+  "_version": "1.1",
+  "_updated": "2026-10-06",
+  "account_id": "OC-CLIENT-001",
+  "order_limits": {
+    "min_order_dollars": 100000,
+    "max_order_dollars": 250000,
+    "comment": "Scaled for $212M fund. Range $100K-$250K = ~0.05%-0.12% of portfolio."
+  },
+  "position_limits": {
+    "max_equity_position_pct": 10.0,
+    "max_etf_position_pct": 15.0,
+    "max_single_position_pct": 10.0,
+    "comment": "Equities max 10%, ETFs max 15% of total portfolio value. A BUY is rejected if the ticker is already at/over its limit or the trade would push it over. SELLs are never blocked. max_single_position_pct is the legacy key, used only as the equity fallback."
+  },
+  "cash_limits": {
+    "min_cash_floor_pct": 5.0,
+    "cash_ticker": "VMRXX",
+    "comment": "Cash must not drop below 5% of total portfolio after any buy"
+  },
+  "sector_limits": {
+    "max_sector_pct": 25.0,
+    "comment": "No single sector may exceed 25% of total equity holdings (~$26M at current scale)"
+  },
+  "restricted_tickers": {
+    "tickers": [
+      "HUBG"
+    ],
+    "reason": "CRITICAL legal risk \u2014 Nasdaq deficiency, restatement, securities class action",
+    "comment": "Neptune auto-rejects any order involving these tickers"
+  },
+  "etf_proxies": {
+    "crypto": "BITQ",
+    "energy": "VDE",
+    "gold": "IAU",
+    "comment": "Mercury may only submit orders for these ETF tickers"
+  },
+  "mercury_allowed_tickers": [
+    "BITQ",
+    "VDE",
+    "IAU"
+  ],
+  "soft_criteria": {
+    "reject_buy_on_avoid_verdict": true,
+    "reject_if_macro_posture_defensive_and_buy": false,
+    "warn_if_sector_overweight": true,
+    "comment": "Soft criteria produce warnings but Neptune may still approve with rationale"
+  },
+  "pipeline_data_paths": {
+    "stock_dashboard": "/home/jay/stock_dashboard",
+    "research_data_dir": "/home/jay/stock_dashboard/data",
+    "macro_backdrop": "/home/jay/stock_dashboard/macro_backdrop.yaml",
+    "mercury_latest": "/home/jay/stock_dashboard/mercury_latest.json",
+    "rankings_dir": "/home/jay/stock_dashboard/data",
+    "comment": "Paths on Jetson \u2014 adjust for Shogun (/home/shogun/) or Mac Mini"
+  },
+  "local_copies": {
+    "research_json": "/home/jay/paper_trade/data/research_latest.json",
+    "mercury_json": "/home/jay/paper_trade/data/mercury_latest.json",
+    "rankings_json": "/home/jay/paper_trade/data/rankings_latest.json",
+    "macro_backdrop": "/home/jay/paper_trade/data/macro_backdrop.yaml",
+    "comment": "Local copies synced by sync_pipeline_data.sh before each run"
+  }
+}

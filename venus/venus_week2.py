@@ -85,7 +85,7 @@ _OTHER_ACTIVITY_KEYWORDS = [
 ]
 
 
-def _detect_activity_in_text(text, fa=None):
+def _detect_activity_in_text(text, fa=None, live_team_codes=None):
     """
     Scan email text for a specific activity already discussed.
     Returns {"activity": ..., "league": ... or None, "team_code": ... or None}
@@ -95,6 +95,14 @@ def _detect_activity_in_text(text, fa=None):
     A team name (e.g. "Lakers") resolves to that exact team. A bare sport
     word with no team named (e.g. "basketball") resolves to the FA's own
     team for that league, if `fa` is given and they follow one.
+
+    live_team_codes (optional): a set of (league, team_code) pairs that
+    currently have an upcoming game. A team mention outside this set is
+    skipped rather than matched — an FA saying "I'm a Padres fan" while
+    asking for coffee shouldn't get read as confirming a Padres game that
+    doesn't exist; the scan falls through to check for other activities
+    (like the coffee they actually asked for) instead. Pass None to skip
+    this check (matches any team mentioned, regardless of schedule).
     """
     if not text:
         return None
@@ -102,12 +110,16 @@ def _detect_activity_in_text(text, fa=None):
 
     for activity, league, team_code, keywords in _SPORT_TEAM_KEYWORDS:
         if any(kw in text_lower for kw in keywords):
+            if live_team_codes is not None and (league, team_code) not in live_team_codes:
+                continue  # mentioned, but no live game — not a real hook to confirm
             return {"activity": activity, "league": league, "team_code": team_code}
 
     for activity, league, keywords in _SPORT_GENERIC_KEYWORDS:
         if any(kw in text_lower for kw in keywords):
             team_code = (fa or {}).get(f"{league}_team")
             if team_code:
+                if live_team_codes is not None and (league, team_code) not in live_team_codes:
+                    continue
                 return {"activity": activity, "league": league, "team_code": team_code}
 
     for activity, keywords in _OTHER_ACTIVITY_KEYWORDS:
@@ -134,6 +146,170 @@ def _live_sport_hooks(sports_hooks):
     return [h for h in (sports_hooks or []) if h.get("upcoming", {}).get("next_home")]
 
 
+# ── Event-pinned meeting slots ────────────────────────────────────────────
+# A meeting at a game MUST be at the game's date and time — not on whatever
+# Monday/Tuesday the FA's calendar happened to have open. Each live sport hook
+# gets its own slot, built from the hook's upcoming.next_home.
+
+_DAYPART_TIMES = {          # used only when the hook gives a part of the day, not a start time
+    "morning": "10:00 AM", "day": "1:00 PM", "afternoon": "1:00 PM",
+    "evening": "6:00 PM", "night": "7:00 PM",
+}
+_DAYPART_DURATION = {"Football": "4 hrs", "Baseball": "3 hrs", "Basketball": "3 hrs"}
+_DATE_KEYS = ("date", "game_date", "start_date", "datetime", "start", "start_time", "kickoff", "tipoff", "first_pitch", "when")
+_TIME_KEYS = ("time", "start_time", "local_time", "game_time", "tipoff", "kickoff", "first_pitch")
+_DAYPART_KEYS = ("time_of_day", "daypart", "day_part", "tod", "slot", "period")
+
+
+def _fmt_clock(hour, minute):
+    suffix = "AM" if hour < 12 else "PM"
+    return f"{hour % 12 or 12}:{minute:02d} {suffix}"
+
+
+def _parse_game_date_time(nh):
+    """
+    Pull (date, "H:MM AM/PM" or None, daypart or None) out of a next_home value.
+    Defensive on purpose — fetch_prospects.py's exact shape isn't pinned down here, so this
+    accepts a dict (several possible key names), an ISO datetime string, or free text like
+    "Fri, Oct 23 vs MEM (home, night)". Returns (None, None, None) if no date can be found.
+    """
+    import re
+    from datetime import datetime as _dt
+    texts, tz_aware_dt = [], None
+    if isinstance(nh, dict):
+        for k in _DATE_KEYS + _TIME_KEYS + _DAYPART_KEYS:
+            if nh.get(k) not in (None, ""):
+                texts.append((k, str(nh[k])))
+        blob = " ".join(v for _, v in texts) + " " + " ".join(str(v) for v in nh.values() if isinstance(v, str))
+    else:
+        blob = str(nh or "")
+        texts.append(("raw", blob))
+
+    game_date, clock, daypart = None, None, None
+    # 1. ISO date (optionally with a time); convert tz-aware stamps to Pacific
+    m = re.search(r"(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::\d{2})?(Z|[+-]\d{2}:?\d{2})?)?", blob)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        game_date = date(y, mo, d)
+        if m.group(4) is not None:
+            hh, mm, tz = int(m.group(4)), int(m.group(5)), m.group(6)
+            if tz:
+                try:
+                    from zoneinfo import ZoneInfo
+                    iso = m.group(0).replace("Z", "+00:00")
+                    local = _dt.fromisoformat(iso).astimezone(ZoneInfo("America/Los_Angeles"))
+                    game_date, hh, mm = local.date(), local.hour, local.minute
+                except Exception:
+                    pass
+            if not (hh == 0 and mm == 0):           # 00:00 = "time unknown" in many feeds
+                clock = _fmt_clock(hh, mm)
+    # 2. "Oct 23" style
+    if game_date is None:
+        m = re.search(r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2})\b", blob)
+        if m:
+            mon = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].index(m.group(1)) + 1
+            today = date.today()
+            try:
+                game_date = date(today.year, mon, int(m.group(2)))
+                if game_date < today - timedelta(days=30):
+                    game_date = date(today.year + 1, mon, int(m.group(2)))
+            except ValueError:
+                game_date = None
+    # 3. explicit clock time
+    if clock is None:
+        m = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*([AaPp])\.?[Mm]\b", blob)
+        if m:
+            hh, mm = int(m.group(1)) % 12, int(m.group(2) or 0)
+            if m.group(3).lower() == "p":
+                hh += 12
+            clock = _fmt_clock(hh, mm)
+    # 4. part of day
+    m = re.search(r"\b(morning|afternoon|evening|night|day)\b", blob, re.I)
+    if m:
+        daypart = m.group(1).lower()
+    if daypart is None:
+        # the schedule files (nba_schedules.json etc.) store the time as a code: "N" = night, "D" = day
+        codes = []
+        if isinstance(nh, dict):
+            codes = [str(nh[k]).strip().upper() for k in _TIME_KEYS + _DAYPART_KEYS if nh.get(k) not in (None, "")]
+        m = re.search(r"[,(]\s*([ND])\s*[,)]", blob)
+        if m:
+            codes.append(m.group(1))
+        for c in codes:
+            if c in ("N", "D"):
+                daypart = "night" if c == "N" else "day"
+                break
+    return game_date, clock, daypart
+
+
+def _game_slot(hook):
+    """Meeting slot for a sport hook: the game's own date and start time. None if the date is unknown."""
+    nh = (hook.get("upcoming") or {}).get("next_home")
+    game_date, clock, daypart = _parse_game_date_time(nh)
+    if not game_date:
+        return None
+    estimated = clock is None
+    if estimated:
+        clock = _DAYPART_TIMES.get(daypart or "night", "7:00 PM")
+    return {
+        "day":        game_date.strftime("%A"),
+        "date":       game_date.isoformat(),
+        "time":       clock,
+        "duration":   _DAYPART_DURATION.get(hook.get("interest_tag"), "3 hrs"),
+        "pinned":     True,                       # tied to the event — never moved to an "open" slot
+        "time_estimated": estimated,              # True when the feed gave only "night"/"afternoon"
+        "opponent":   (nh.get("opponent") if isinstance(nh, dict) else None),
+        "team":       hook.get("team_name") or hook.get("team") or hook.get("team_code"),
+    }
+
+
+# ── Conflict-free open slots (non-game meetings) ──────────────────────────
+
+def _clock_to_min(t):
+    import re
+    m = re.match(r"\s*(\d{1,2}):(\d{2})\s*([AaPp])", t or "")
+    if not m:
+        return None
+    return (int(m.group(1)) % 12 + (12 if m.group(3).lower() == "p" else 0)) * 60 + int(m.group(2))
+
+
+def _dur_to_min(d):
+    import re
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(hr|hour|min)", str(d or ""), re.I)
+    if not m:
+        return 60
+    return int(float(m.group(1)) * (60 if m.group(2).lower().startswith("h") else 1))
+
+
+_SLOT_CANDIDATES = ["8:30 AM", "10:30 AM", "12:00 PM", "1:00 PM", "3:00 PM", "4:30 PM"]
+
+
+def compute_open_slots(calendar, open_days, duration="90 min", n=2, rng=None):
+    """
+    Choose n meeting times that do NOT overlap anything on the FA's calendar, on different days
+    (earliest days first). Replaces the hardcoded Monday 10:30 / Tuesday 1:00, which overlapped
+    a Monday 11:30 block on at least one calendar.
+    """
+    import random as _r
+    rng = rng or _r
+    need = _dur_to_min(duration)
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    slots = []
+    for i, day in enumerate(days):
+        if len(slots) >= n or i >= len(open_days):
+            break
+        busy = [(_clock_to_min(e["time"]), _clock_to_min(e["time"]) + _dur_to_min(e.get("duration")))
+                for e in calendar.get("calendar", {}).get(day, []) if _clock_to_min(e.get("time"))is not None]
+        free = []
+        for c in _SLOT_CANDIDATES:
+            a = _clock_to_min(c)
+            if all(a + need <= b0 or a >= b1 for b0, b1 in busy):
+                free.append(c)
+        if free:
+            slots.append({"day": day, "date": open_days[i].isoformat(), "time": rng.choice(free), "duration": duration})
+    return slots
+
+
 def select_activity_and_venue(fa, venues, sports_hooks=None, email_record=None):
     """
     Pick the best activity for this FA, plus any other options that are
@@ -157,19 +333,26 @@ def select_activity_and_venue(fa, venues, sports_hooks=None, email_record=None):
     modifiers    = venues.get("activity_close_modifiers", {})
     interest_map = venues.get("activity_to_interest_map", {})
     live_hooks   = _live_sport_hooks(sports_hooks)
+    live_team_codes = {(h["league"], h["team_code"]) for h in live_hooks}
 
     # 0. Check if a specific activity was already discussed in Week 1
     if email_record:
         week1_body  = email_record.get("body", "")
         fa_reply    = email_record.get("response_body", "")
         # Check FA reply first (stronger signal — they responded to it)
-        discussed = _detect_activity_in_text(fa_reply, fa) or _detect_activity_in_text(week1_body, fa)
+        discussed = (_detect_activity_in_text(fa_reply, fa, live_team_codes)
+                     or _detect_activity_in_text(week1_body, fa, live_team_codes))
         if discussed:
             act = discussed["activity"]
             outdoor_venues = venues.get("outdoor_activities", {})
             if discussed["league"]:
                 stadium = _stadium_for(venues, discussed["league"], discussed["team_code"])
                 if stadium:
+                    stadium = dict(stadium)
+                    for h in live_hooks:
+                        if (h["league"], h["team_code"]) == (discussed["league"], discussed["team_code"]):
+                            stadium["game"] = _game_slot(h)
+                            break
                     return act, stadium, modifiers.get(act, 0.20), []
             elif act in outdoor_venues:
                 locs = outdoor_venues.get(act, {}).get(territory, [])
@@ -194,6 +377,7 @@ def select_activity_and_venue(fa, venues, sports_hooks=None, email_record=None):
         stadium = _stadium_for(venues, hook["league"], hook["team_code"])
         if stadium:
             act = hook["interest_tag"]
+            stadium = dict(stadium, game=_game_slot(hook))   # the game's own date/time travels with the venue
             hook_options.append((act, stadium, modifiers.get(act, 0.20)))
     if hook_options:
         primary, *alternates = hook_options
@@ -451,10 +635,29 @@ def draft_meeting_proposal(email_record, fa, calendar, activity, venue, venues_d
     # Randomize slot order so FA Agent doesn't always default to the last option
     slots_shuffled = open_slots[:]
     _random.shuffle(slots_shuffled)
-    slot_lines = "\n".join(
-        f"  - {s['day']}, {s['date']} at {s['time']} ({s['duration']})"
-        for s in slots_shuffled
-    )
+
+    def _slot_text(s):
+        return f"{s['day']}, {s['date']} at {s['time']}"
+
+    primary_game = (venue or {}).get("game")
+    if alt_options and any((v or {}).get("game") for v in [venue] + [a[1] for a in alt_options]):
+        # several live games: list each one's own date/time (no shared "open slot" choice)
+        lines = []
+        for a_act, a_venue in [(activity, venue)] + [(a[0], a[1]) for a in alt_options]:
+            g = (a_venue or {}).get("game")
+            when = (_slot_text(g) + (" (approx. start)" if g.get("time_estimated") else "")) if g else \
+                   "; ".join(_slot_text(o) for o in slots_shuffled)
+            lines.append(f"  - {a_act} at {a_venue.get('name')}: {when}")
+        slot_lines = "\n".join(lines)
+    elif primary_game:
+        # Game meeting: the time IS the game. No "open slot" choice is offered.
+        approx = " (approx. start)" if primary_game.get("time_estimated") else ""
+        slot_lines = f"  - {_slot_text(primary_game)}{approx} — the game itself; the date and time are fixed by the schedule"
+    else:
+        slot_lines = "\n".join(
+            f"  - {s['day']}, {s['date']} at {s['time']} ({s['duration']})"
+            for s in slots_shuffled
+        )
 
     # Build venue description — Jay is attending, not Venus
     venue_desc = _venue_desc(activity, venue)
@@ -468,15 +671,18 @@ def draft_meeting_proposal(email_record, fa, calendar, activity, venue, venues_d
     multi_hook_instruction = ""
     if alt_options:
         fa_first_name = fa["first_name"]
-        alt_lines = [f"  - {activity} at {venue.get('name')} — {venue_desc}"]
+        def _when(v):
+            g = (v or {}).get("game")
+            return f" ({_slot_text(g)})" if g else ""
+        alt_lines = [f"  - {activity} at {venue.get('name')}{_when(venue)} — {venue_desc}"]
         for alt_activity, alt_venue, _alt_mod in alt_options:
-            alt_lines.append(f"  - {alt_activity} at {alt_venue.get('name')} — {_venue_desc(alt_activity, alt_venue)}")
+            alt_lines.append(f"  - {alt_activity} at {alt_venue.get('name')}{_when(alt_venue)} — {_venue_desc(alt_activity, alt_venue)}")
         multi_hook_instruction = f"""
 MULTIPLE LIVE HOOKS:
 {fa_first_name} follows more than one team with a game coming up right now:
 {chr(10).join(alt_lines)}
-Briefly mention that Jay has a couple of options and ask which one sounds best —
-don't just pick one for them. Keep it light, not a bulleted list in the email itself.
+Briefly mention that Jay has a couple of options (with each game's date) and ask which one sounds best —
+don't just pick one for them. Use the game dates/times exactly as listed; never suggest a different time for a game. Keep it light, not a bulleted list in the email itself.
 """
 
     is_assistant = fa.get("contact_via_assistant") and fa.get("assistant_name")
@@ -530,7 +736,7 @@ Draft a short, warm follow-up email proposing the meeting with specific time opt
 MEETING DETAILS:
 - Activity: {activity} at {venue.get('name', 'TBD')}
 - Venue: {venue_desc}
-- Time options (ask what works for THEM, do not say you have these open):
+- When (use EXACTLY these dates/times; for a game, the schedule fixes it — do not invent other times):
 {slot_lines}
 {multi_hook_instruction}
 SCHEDULING CONTEXT:
@@ -719,8 +925,10 @@ def run(dry_run=False, verbose=False):
             # Generate/load FA calendar
             print(f"   📅 Generating calendar for {fa['first_name']}...")
             calendar = generate_fa_calendar(fa, open_days, venues_data)
+            # Non-game meetings (coffee/lunch/outdoor) use slots that don't collide with the FA's blocked time
+            calendar["open_slots"] = compute_open_slots(calendar, open_days)
             open_slots = calendar.get("open_slots", [])
-            print(f"      Open slots: {[s['day'] + ' ' + s['time'] for s in open_slots]}")
+            print(f"      Open slots (non-game): {[s['day'] + ' ' + s['time'] for s in open_slots]}")
 
             # Select activity and venue — sports_hooks (persisted at Week 1
             # from fetch_prospects.py) carries the real upcoming-game data,
@@ -732,6 +940,12 @@ def run(dry_run=False, verbose=False):
             print(f"   🎯 Activity: {activity} @ {venue.get('name', 'TBD')}"
                   + (f"  (+{len(alt_options)} more live hook{'s' if len(alt_options) > 1 else ''})" if alt_options else ""))
             print(f"      Close modifier: +{close_mod*100:.0f}%")
+            for _a, _v in [(activity, venue)] + [(a, v) for a, v, _c in alt_options]:
+                g = (_v or {}).get("game")
+                if g:
+                    print(f"      🗓  {_a}: {g['day']} {g['date']} at {g['time']}" + (" (approx.)" if g.get("time_estimated") else ""))
+                elif _a in _SPORT_ACTIVITIES:
+                    print(f"      ⚠️  {_a}: game date not readable from next_home — falling back to open slots")
 
             # Draft meeting proposal email
             subject, body = draft_meeting_proposal(rec, fa, calendar, activity, venue, venues_data, alt_options=alt_options)
@@ -744,8 +958,10 @@ def run(dry_run=False, verbose=False):
                 "venue_name":    venue.get("name", ""),
                 "venue_address": venue.get("address", ""),
                 "venue_details": venue,
+                "slot":          venue.get("game"),      # None → not a game; use open_slots
                 "alt_options": [
-                    {"activity": a, "venue_name": v.get("name", ""), "venue_address": v.get("address", "")}
+                    {"activity": a, "venue_name": v.get("name", ""), "venue_address": v.get("address", ""),
+                     "slot": v.get("game")}
                     for a, v, _cm in alt_options
                 ],
                 "open_slots":    open_slots,

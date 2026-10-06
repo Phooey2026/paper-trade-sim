@@ -38,9 +38,15 @@ def load_all_trades():
         try:
             data = load_json(tf)
             run_date = data.get("run_date", "")
+            realized_by_order = {t.get("order_id"): t.get("realized_gain")
+                                 for t in data.get("trades_executed", [])
+                                 if t.get("order_id") and t.get("realized_gain") is not None}
             for r in data.get("results", []):
                 r["_run_date"] = run_date
                 r["_run_file"] = os.path.basename(tf)
+                oid = r.get("order", {}).get("order_id")
+                if oid in realized_by_order:
+                    r["_realized_gain"] = realized_by_order[oid]
             all_results.extend(data.get("results", []))
         except Exception as e:
             print(f"  ⚠️  Could not load {tf}: {e}")
@@ -106,7 +112,7 @@ def build_holdings_rows(positions, total_portfolio):
 
 def build_activity_rows(results):
     if not results:
-        return """<tr><td colspan="7" class="empty-row">
+        return """<tr><td colspan="8" class="empty-row">
             No trade activity yet. Run neptune.py to generate orders.</td></tr>"""
 
     rows = []
@@ -134,6 +140,13 @@ def build_activity_rows(results):
         # Truncate long rationale
         short_rat = rationale[:120] + "…" if len(rationale) > 120 else rationale
 
+        rg = r.get("_realized_gain")
+        if rg is None:
+            rg_html = '<td class="num muted">—</td>'
+        else:
+            rg_cls = "pos" if rg >= 0 else "neg"
+            rg_html = f'<td class="num {rg_cls}">{"▲" if rg >= 0 else "▼"} {fmt_money(abs(rg))}</td>'
+
         rows.append(f"""
           <tr>
             <td class="muted">{run_date}</td>
@@ -141,6 +154,7 @@ def build_activity_rows(results):
             <td><strong>{ticker}</strong></td>
             <td class="{action_cls}">{action}</td>
             <td class="num">{fmt_money(dollars)}</td>
+            {rg_html}
             <td>{status_html} {conf_html}</td>
             <td class="rationale-col" title="{rationale}">{short_rat}</td>
           </tr>""")
@@ -163,6 +177,9 @@ def generate_html(holdings, all_results, n_trade_files, generated_at):
     eq_val     = s["total_equity_value"]
     etf_val    = s["total_etf_value"]
 
+    realized   = s.get("realized_gain_total", 0.0)
+    rl_cls     = "pos" if realized >= 0 else "neg"
+    rl_arrow   = "▲" if realized >= 0 else "▼"
     gl_cls     = "pos" if total_gl >= 0 else "neg"
     gl_arrow   = "▲" if total_gl >= 0 else "▼"
 
@@ -481,9 +498,14 @@ def generate_html(holdings, all_results, n_trade_files, generated_at):
       <div class="sub">Positions + Cash</div>
     </div>
     <div class="card accent-green">
-      <div class="label">Total Gain / Loss</div>
+      <div class="label">Unrealized Gain / Loss</div>
       <div class="value {gl_cls}">{gl_arrow} {fmt_money(abs(total_gl))}</div>
       <div class="sub {gl_cls}">{fmt_pct(gl_pct)} vs cost basis</div>
+    </div>
+    <div class="card accent-green">
+      <div class="label">Realized Gain / Loss</div>
+      <div class="value {rl_cls}">{rl_arrow} {fmt_money(abs(realized))}</div>
+      <div class="sub">Closed trades (avg-cost)</div>
     </div>
     <div class="card accent-gold">
       <div class="label">Cash (VMRXX)</div>
@@ -575,6 +597,7 @@ def generate_html(holdings, all_results, n_trade_files, generated_at):
           <th>Ticker</th>
           <th>Action</th>
           <th class="num">Amount</th>
+          <th class="num">Realized G/L</th>
           <th>Decision</th>
           <th>Neptune Rationale</th>
         </tr>
