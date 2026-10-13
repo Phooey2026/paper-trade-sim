@@ -702,7 +702,9 @@ Sign as: — Orbit"""
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     alert = {
         "email_id":      f"ORB-ALERT-{issue['account_id']}-{ts}",
-        "fa_id":         "",
+        "fa_id":         (client or {}).get("fa_id") or issue.get("fa_id") or "",
+        "client_name":   issue["client_name"],
+        "account_id":    issue["account_id"],
         "fa_name":       issue["fa_name"],
         "firm":          issue["firm"],
         "territory":     issue["territory"],

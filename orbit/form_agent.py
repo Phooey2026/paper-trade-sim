@@ -34,6 +34,7 @@ Usage
 
 import argparse
 import base64
+import http.client
 import io
 import json
 import os
@@ -509,12 +510,16 @@ def _post_json(url, payload, key, timeout=300):
                 last = OpenRouterError(e.code, body)
                 continue
             raise OpenRouterError(e.code, body)
-        except (urllib.error.URLError, socket.timeout, TimeoutError) as e:
+        except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError,
+                http.client.HTTPException, ValueError) as e:
+            # Network trouble, including a response cut off mid-body (http.client.IncompleteRead,
+            # which killed a whole Orbit run on 2026-10-13) or a truncated/garbled JSON body.
             last = e
             if attempt < 2:
                 time.sleep(4 * (attempt + 1))
                 continue
-            raise FormGenerationError("Could not reach OpenRouter ({}). Are you online?".format(e))
+            raise FormGenerationError("Could not reach OpenRouter ({}: {}). Are you online?".format(
+                type(e).__name__, e))
     raise FormGenerationError(str(last))
 
 

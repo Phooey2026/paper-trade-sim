@@ -89,7 +89,8 @@ def activity_icon(activity):
 
 def pipeline_emails_only(emails):
     return [e for e in emails
-            if e.get("source") != "debrief" and e.get("fa_id") != "INTERNAL"]
+            if e.get("source") not in ("debrief", "orbit_alert", "closure_notice")
+            and e.get("fa_id") != "INTERNAL"]
 
 
 # ── Scoreboard ────────────────────────────────────────────────────────────
@@ -212,6 +213,39 @@ def build_orbit_alert_card(em):
         </div>"""
 
 
+def build_closure_notice_card(em):
+    """Venus's courtesy note to an advisor about a closed client, plus the advisor's thanks."""
+    sent_at = em.get("sent_at", "")[:16].replace("T", " ")
+    body    = em.get("body", "").replace("\n", "<br>")
+    reply   = (em.get("response_body") or "").replace("\n", "<br>")
+    reply_html = (f"""<div class="message-block" style="max-width:100%;align-self:stretch">
+              <div class="msg-header"><span class="msg-from">{em.get('fa_name','')}</span>
+              <span class="msg-time">{(em.get('responded_at') or '')[:16].replace('T',' ')}</span></div>
+              <div class="msg-body">{reply}</div></div>""" if reply else
+              '<div class="strategy-note">⏳ Awaiting advisor acknowledgement</div>')
+    return f"""
+        <div class="prospect-card card-pending">
+          <div class="card-header">
+            <div class="card-title">
+              <span class="fa-name">📨 Closure notice — {em.get('client_name','')}</span>
+              <span class="fa-firm">{em.get('fa_name','')} · {em.get('firm','')} · {em.get('territory','')}</span>
+            </div>
+            <div class="card-meta">
+              <span class="week-pill">NOTICE</span>
+              <span class="badge-yes">{'📩 ACKNOWLEDGED' if reply else '⏳ SENT'}</span>
+              <span class="score-badge">{sent_at}</span>
+            </div>
+          </div>
+          <div class="dialogue">
+            <div class="message-block" style="max-width:100%;align-self:stretch">
+              <div class="msg-header"><span class="msg-from">💫 Venus</span><span class="msg-time">{sent_at}</span></div>
+              <div class="msg-body"><b>{em.get('subject','')}</b><br><br>{body}</div>
+            </div>
+            {reply_html}
+          </div>
+        </div>"""
+
+
 # ── Dialogue Tab ──────────────────────────────────────────────────────────
 
 def build_dialogue_cards(emails):
@@ -221,7 +255,7 @@ def build_dialogue_cards(emails):
     orbit_alerts = [e for e in emails if e.get("source") == "orbit_alert"]
     orbit_cards  = [build_orbit_alert_card(e) for e in orbit_alerts]
 
-    if not pe and not orbit_alerts:
+    if not pe and not orbit_alerts and not any(e.get("source") == "closure_notice" for e in emails):
         return """<div class="empty-state">
             <div class="empty-icon">💫</div>
             <div>No emails sent yet.</div>
@@ -229,6 +263,7 @@ def build_dialogue_cards(emails):
         </div>"""
 
     cards = list(orbit_cards)  # orbit alerts at the top
+    cards += [build_closure_notice_card(e) for e in emails if e.get("source") == "closure_notice"]
     for em in pe:
         week     = em.get("pipeline_week", 1)
         status   = em.get("pipeline_status", "")

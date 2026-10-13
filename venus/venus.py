@@ -148,7 +148,7 @@ def _safe_load_week(email_file):
     try:
         with open(email_file) as f:
             rec = json.load(f)
-        if rec.get("source") in ("orbit_alert", "debrief"):
+        if rec.get("source") in ("orbit_alert", "debrief", "closure_notice"):
             return -1
         return rec.get("pipeline_week", 1)
     except Exception:
@@ -362,6 +362,8 @@ def run_week1(args):
     for ef in glob.glob(os.path.join(OUTBOX_DIR, "email_*.json")):
         try:
             rec = load_json(ef)
+            if rec.get("source") in ("orbit_alert", "closure_notice", "debrief"):
+                continue
             if rec.get("pipeline_week", 1) >= 1:
                 existing_fa_ids.add(rec["fa_id"])
         except Exception:
@@ -458,8 +460,12 @@ Pipeline flow:
   python3 venus.py --week 5           # Venus debrief email to Jay
         """
     )
-    parser.add_argument("--week", type=int, choices=[1,2,3,4,5], required=True,
+    parser.add_argument("--week", type=int, choices=[1,2,3,4,5],
                         help="Pipeline week to run (1-5)")
+    parser.add_argument("--notify-closures", action="store_true",
+                        help="Send advisors a note about clients who fully closed (Orbit alerts)")
+    parser.add_argument("--no-notify", action="store_true",
+                        help="Skip the automatic closure notices normally sent at Week 1")
     parser.add_argument("--dry-run", action="store_true",
                         help="Preview without saving any files")
     parser.add_argument("--verbose", "-v", action="store_true",
@@ -470,11 +476,23 @@ Pipeline flow:
                         help="Send via local SMTP (Week 1 only)")
     args = parser.parse_args()
 
+    if args.notify_closures and not args.week:
+        sys.path.insert(0, SCRIPT_DIR)
+        import venus_closure_notice
+        venus_closure_notice.run(dry_run=args.dry_run, verbose=args.verbose)
+        return
+    if not args.week:
+        parser.error("--week is required (or use --notify-closures)")
+
     banner(args.week, args.dry_run)
     check_prerequisites(args.week)
 
     if args.week == 1:
         run_week1(args)
+        if not args.no_notify:
+            sys.path.insert(0, SCRIPT_DIR)
+            import venus_closure_notice
+            venus_closure_notice.run(dry_run=args.dry_run, verbose=args.verbose)
 
     elif args.week == 2:
         sys.path.insert(0, SCRIPT_DIR)

@@ -132,6 +132,25 @@ REPLY:
     return prompt
 
 
+def build_ack_prompt(email_record, fa):
+    """Prompt for a courtesy reply to a client-closure notice from Venus."""
+    client = email_record.get("client_name", "my client")
+    return f"""You are {fa['name']}'s office at {fa['firm']} ({fa['territory']}).
+Venus from Obsidian Capital just sent you this note:
+
+Subject: {email_record['subject']}
+{email_record['body']}
+
+This is a courtesy notice, not a sales pitch. Write a brief, gracious reply
+(1-3 sentences) thanking her for letting you know about {client}. Do not pitch
+anything or ask for a meeting.
+
+RESPOND IN THIS FORMAT:
+DECISION: ACK
+REPLY:
+[your reply]"""
+
+
 def call_fa_llm(prompt, verbose=False):
     """Call the FA agent via Hermes or Ollama (Mac-compatible)."""
     if verbose:
@@ -180,11 +199,17 @@ def process_email(email_file, advisors, fund, dry_run=False, verbose=False):
         print(f"  ⏭️  {os.path.basename(email_file)} — already answered")
         return None
 
-    fa_id = email_record["fa_id"]
+    if email_record.get("source") in ("orbit_alert", "debrief") or email_record.get("fa_id") == "INTERNAL":
+        return None  # internal records: nothing for an advisor to answer
+
+    fa_id = email_record.get("fa_id", "")
     fa    = get_fa_profile(fa_id, advisors)
     if not fa:
         print(f"  ❌ FA {fa_id} not found in CRM")
         return None
+
+    if email_record.get("source") == "closure_notice":
+        return process_closure_notice(email_file, email_record, fa, dry_run, verbose)
 
     print(f"\n  FA: {fa['name']} | {fa['firm']} | {fa['territory']}")
     print(f"  Email subject: {email_record['subject']}")
@@ -236,6 +261,46 @@ def process_email(email_file, advisors, fund, dry_run=False, verbose=False):
     return result
 
 
+def process_closure_notice(email_file, email_record, fa, dry_run=False, verbose=False):
+    """Advisor acknowledges a client-closure notice ('thanks for letting me know')."""
+    print(f"\n  FA: {fa['name']} | {fa['firm']} | {fa['territory']}")
+    print(f"  Closure notice: {email_record['subject']}")
+    response = call_fa_llm(build_ack_prompt(email_record, fa), verbose=verbose)
+    _, reply = parse_fa_response(response)
+    if (not reply or "Hermes not available" in reply or "Not interested" in reply
+            or "DECISION" in reply):
+        first = fa.get("first_name") or fa["name"].split()[0]
+        reply = (f"Thanks for letting me know, Venus. I appreciate the heads-up on "
+                 f"{email_record.get('client_name', 'my client')}. — {first}")
+    print(f"  Decision: 📩 ACK")
+    print(f"  Reply: {reply[:150]}{'...' if len(reply)>150 else ''}")
+
+    result = {
+        "response_id": f"RSP-{fa['fa_id']}-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        "email_id": email_record.get("email_id"), "fa_id": fa["fa_id"],
+        "fa_name": fa["name"], "firm": fa["firm"], "decision": "ACK", "reply": reply,
+        "responded_at": datetime.now().isoformat(),
+        "email_subject": email_record["subject"], "venus_body": email_record["body"],
+        "strategy_notes": email_record.get("strategy_notes", []), "prospect_score": 0,
+    }
+    if not dry_run:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        with open(os.path.join(RESPONSES_DIR, f"response_{ts}_{fa['fa_id']}_ACK.json"), "w") as f:
+            json.dump(result, f, indent=2)
+        email_record["response"] = "ACK"
+        email_record["response_body"] = reply
+        email_record["responded_at"] = result["responded_at"]
+        with open(email_file, "w") as f:
+            json.dump(email_record, f, indent=2)
+    return result
+
+
+def _is_unanswered(rec):
+    return (not rec.get("response")
+            and rec.get("source") not in ("orbit_alert", "debrief")
+            and rec.get("fa_id") != "INTERNAL")
+
+
 def main():
     parser = argparse.ArgumentParser(description="FA Gatekeeper Agent")
     parser.add_argument("--email", type=str, help="Process a specific email file")
@@ -264,7 +329,7 @@ def main():
         for ef in email_files:
             try:
                 rec = load_json(ef)
-                if not rec.get("response") and rec.get("source") != "orbit_alert":
+                if _is_unanswered(rec):
                     unanswered.append(ef)
             except:
                 pass
@@ -277,7 +342,7 @@ def main():
         for ef in all_emails:
             try:
                 rec = load_json(ef)
-                if not rec.get("response") and rec.get("source") != "orbit_alert":
+                if _is_unanswered(rec):
                     email_files = [ef]
                     break
             except:
@@ -294,10 +359,14 @@ def main():
         if r:
             results.append(r)
 
+    acks      = [r for r in results if r["decision"] == "ACK"]
+    results   = [r for r in results if r["decision"] != "ACK"]
     yes_count = sum(1 for r in results if r["decision"] == "YES")
     no_count  = sum(1 for r in results if r["decision"] == "NO")
 
     print(f"\n{'='*60}")
+    if acks:
+        print(f"  📩 Closure notices acknowledged: {len(acks)}")
     print(f"  Processed: {len(results)} | ✅ YES: {yes_count} | ❌ NO: {no_count}")
     if len(results) > 0:
         rate = round(yes_count / len(results) * 100, 1)

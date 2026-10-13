@@ -328,7 +328,7 @@ def run(dry_run=False, verbose=False):
 
         save_pipeline_state(state)
         print(f"   ✅ Pipeline cycle complete — all records marked week=5")
-        print(f"\n   🎉 New AUM added to VMRXX: ${total_new_aum:,.0f}")
+        print(f"\n   🎉 New AUM added to the fund: ${total_new_aum:,.0f}")
         print(f"   ▶️  Run fetch_prospects.py to start the next cycle")
 
     return len(eligible)
@@ -351,7 +351,7 @@ def _fallback_debrief(summary):
         lines.append(f"Great news — we closed {len(closes)} deal(s) this cycle:")
         for c in closes:
             lines.append(f"  • {c['fa_name']} at {c['firm']}: ${c['deal_value']:,.0f} via {c['meeting_activity']} at {c['meeting_venue']}")
-        lines.append(f"Total new AUM: ${total_aum:,.0f} — all added to VMRXX.")
+        lines.append(f"Total new AUM: ${total_aum:,.0f} — all added to the fund at NAV.")
         lines.append("")
     if no_closes:
         lines.append(f"We met with {len(no_closes)} FA(s) who didn't commit this time:")
