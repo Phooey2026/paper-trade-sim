@@ -965,10 +965,10 @@ def generate_html(emails, fund, crm_data, debrief_report, generated_at):
 <div class="fund-banner">
   <span style="color:var(--venus);font-weight:700">{fund_name}</span>
   <div class="fund-stat"><span class="fund-label">YTD:</span>
-    <span class="fund-val">+{ytd['ocrff']}%</span>
-    <span class="fund-vs">vs S&amp;P +{ytd['sp500']}%</span></div>
+    <span class="fund-val">{ytd['ocrff']:+.1f}%</span>
+    <span class="fund-vs">vs S&amp;P {ytd['sp500']:+.1f}%</span></div>
   <div class="fund-stat"><span class="fund-label">Alpha YTD:</span>
-    <span class="fund-val">+{ytd['alpha']}%</span></div>
+    <span class="fund-val">{ytd['alpha']:+.1f}%</span></div>
   <div class="fund-stat"><span class="fund-label">NAV:</span>
     <span class="fund-val">${nav:.2f}</span></div>
 </div>

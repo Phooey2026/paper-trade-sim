@@ -296,8 +296,8 @@ def generate_statement(client, fund, holdings):
     </div>
     <div class="card">
       <div class="lbl">YTD Return</div>
-      <div class="val" style="color:var(--green)">+{ytd['ocrff']}%</div>
-      <div class="sub">vs S&P 500 +{ytd['sp500']}%</div>
+      <div class="val" style="color:var(--green)">{ytd['ocrff']:+.1f}%</div>
+      <div class="sub">vs S&P 500 {ytd['sp500']:+.1f}%</div>
     </div>
   </div>
 
@@ -306,21 +306,21 @@ def generate_statement(client, fund, holdings):
     <div class="perf-grid">
       <div class="perf-card">
         <div class="period">Year to Date</div>
-        <div class="ocrff">+{ytd['ocrff']}%</div>
-        <div class="sp500">S&P 500: +{ytd['sp500']}%</div>
-        <div class="alpha">Alpha: +{ytd['alpha']}%</div>
+        <div class="ocrff">{ytd['ocrff']:+.1f}%</div>
+        <div class="sp500">S&P 500: {ytd['sp500']:+.1f}%</div>
+        <div class="alpha">Alpha: {ytd['alpha']:+.1f}%</div>
       </div>
       <div class="perf-card">
         <div class="period">1 Year</div>
-        <div class="ocrff">+{one_yr['ocrff']}%</div>
-        <div class="sp500">S&P 500: +{one_yr['sp500']}%</div>
-        <div class="alpha">Alpha: +{one_yr['alpha']}%</div>
+        <div class="ocrff">{one_yr['ocrff']:+.1f}%</div>
+        <div class="sp500">S&P 500: {one_yr['sp500']:+.1f}%</div>
+        <div class="alpha">Alpha: {one_yr['alpha']:+.1f}%</div>
       </div>
       <div class="perf-card">
         <div class="period">Since Inception (2020)</div>
-        <div class="ocrff">+{since['ocrff']}%</div>
-        <div class="sp500">S&P 500: +{since['sp500']}%</div>
-        <div class="alpha">Alpha: +{since['alpha']}%</div>
+        <div class="ocrff">{since['ocrff']:+.1f}%</div>
+        <div class="sp500">S&P 500: {since['sp500']:+.1f}%</div>
+        <div class="alpha">Alpha: {since['alpha']:+.1f}%</div>
       </div>
     </div>
   </div>
@@ -490,8 +490,8 @@ Request: "{issue['narrative']}"
 Account details:
   OCRFF Shares: {client['ocrff_shares']:,.4f}
   Account Value: ${client['ocrff_account_value']:,.2f}
-  YTD Return: +{fund['performance']['ytd']['ocrff']}% (S&P 500: +{fund['performance']['ytd']['sp500']}%)
-  1-Year Return: +{fund['performance']['one_year']['ocrff']}%
+  YTD Return: {fund['performance']['ytd']['ocrff']:+.1f}% (S&P 500: {fund['performance']['ytd']['sp500']:+.1f}%)
+  1-Year Return: {fund['performance']['one_year']['ocrff']:+.1f}%
 
 You are attaching their account statement. Write a brief, warm 3-4 sentence 
 cover note to accompany the statement. Mention the key highlights (account value, 

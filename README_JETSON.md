@@ -57,6 +57,10 @@ cp ~/paper_trade/neptune_holdings_ORIGINAL.json ~/paper_trade/neptune_holdings.j
 bash ~/paper_trade/sync_pipeline_data.sh
 python3 ~/paper_trade/update_prices.py
 
+cd ~/paper_trade
+python3 backtest_fund_returns.py --holdings neptune_holdings.json --fund venus/ocrff_fund.json \
+    --late-start drop --save-prices prices.csv --write --update-risk
+
 # 3. Neptune trading session
 cd ~/paper_trade
 python3 generate_sample_orders.py
