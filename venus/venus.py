@@ -138,6 +138,11 @@ def check_prerequisites(week):
         email_files = glob.glob(os.path.join(OUTBOX_DIR, "email_*.json"))
         w4_ready = [ef for ef in email_files if _safe_load_week(ef) == 4]
         if not w4_ready:
+            # A cycle where every prospect declined has no Week 4 records but still gets a debrief
+            sys.path.insert(0, SCRIPT_DIR)
+            import venus_week5
+            if venus_week5.find_declined(OUTBOX_DIR):
+                return
             print(f"\n❌ No Week 4 emails found (simulated meetings pending).")
             print(f"   Run: python3 venus.py --week 4   first")
             sys.exit(1)

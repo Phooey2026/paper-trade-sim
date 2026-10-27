@@ -107,6 +107,7 @@ ABOUT {fa['first_name'].upper()}:
 - Interests: {interests}
 - Personality: {personality}
 - Territory: {fa['territory']}, CA
+- Education: {fa.get('education', 'not on file')} (this is a fact about you — never contradict it)
 
 YOU JUST RECEIVED THIS EMAIL:
 Subject: {email_record['subject']}

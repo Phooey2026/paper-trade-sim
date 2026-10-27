@@ -60,6 +60,30 @@ def upsert_pipeline_record(state, fa_id, email_id, updates):
     state["cycles"].append({"email_id": email_id, "fa_id": fa_id, **updates})
 
 
+def find_declined(outbox_dir=None):
+    """Declined-in-Week-2 records that no debrief has reported yet.
+    Returns [(file, record)]. Skips records stamped `debriefed_at`, and (for records from
+    before that stamp existed) anything answered before the most recent debrief."""
+    outbox_dir = outbox_dir or OUTBOX_DIR
+    files = sorted(glob.glob(os.path.join(outbox_dir, "email_*.json")))
+    recs = []
+    for ef in files:
+        try:
+            with open(ef) as f:
+                recs.append((ef, json.load(f)))
+        except Exception:
+            pass
+    last_debrief = max((r.get("sent_at", "") for _, r in recs if r.get("source") == "debrief"), default="")
+    out = []
+    for ef, r in recs:
+        if (r.get("pipeline_week") == 5 and r.get("pipeline_status") == "closed_no"
+                and r.get("source") not in ("orbit_alert", "debrief", "closure_notice")
+                and not r.get("debriefed_at")
+                and (r.get("responded_at") or r.get("sent_at") or "") >= last_debrief):
+            out.append((ef, r))
+    return out
+
+
 def build_debrief_prompt(cycle_summary):
     """Build Venus's debrief email prompt."""
     closes     = cycle_summary["closes"]
@@ -86,7 +110,16 @@ def build_debrief_prompt(cycle_summary):
 
     declined_lines = []
     for d in nos:
-        declined_lines.append(f"  - {d['fa_name']} ({d['firm']}): declined in Week 2")
+        why = f' — their reply: "{d["reply"]}"' if d.get("reply") else ""
+        declined_lines.append(f"  - {d['fa_name']} ({d['firm']}): declined in Week 2{why}")
+
+    no_meeting_note = ""
+    if not closes and not no_closes:
+        no_meeting_note = (
+            "NO MEETINGS WERE HELD THIS CYCLE — every prospect declined in Week 2. "
+            "Ignore the 'excited / lead with good news' guidance below: be candid and "
+            "constructive. Say what the replies have in common, whether it's the pitch or "
+            "the numbers, and give 2-3 concrete changes for the next cycle.\n\n")
 
     close_block    = "\n".join(close_lines)    or "  None this cycle"
     no_close_block = "\n".join(no_close_lines) or "  None"
@@ -112,7 +145,7 @@ TOTALS:
 - Close rate (meetings to close): {close_rate:.1f}%
 - Prospects contacted: {cycle_summary['total_contacted']}
 
-YOUR TASK:
+{no_meeting_note}YOUR TASK:
 Write a 300-400 word debrief email to Jay. This is Venus calling Jay right after 
 the last meeting closed — excited, professional, specific.
 
@@ -155,18 +188,9 @@ def run(dry_run=False, verbose=False):
         except Exception:
             pass
 
-    # Also gather Week 5 closed_no records (declined in Week 2)
-    declined_records = []
-    for ef in email_files:
-        try:
-            with open(ef) as f:
-                rec = json.load(f)
-            if (rec.get("pipeline_week") == 5
-                    and rec.get("pipeline_status") == "closed_no"
-                    and rec.get("source") != "orbit_alert"):
-                declined_records.append(rec)
-        except Exception:
-            pass
+    # Also gather declined-in-Week-2 records not yet reported in a debrief
+    declined_pairs   = find_declined()
+    declined_records = [rec for _, rec in declined_pairs]
 
     if not eligible and not declined_records:
         print("   ℹ️  No completed pipeline records found.")
@@ -212,6 +236,7 @@ def run(dry_run=False, verbose=False):
             "fa_id":   fa_id,
             "fa_name": fa.get("name", rec.get("fa_name", "")),
             "firm":    fa.get("firm", rec.get("firm", "")),
+            "reply":   (rec.get("response_body") or "").strip().replace("\n", " ")[:220],
         })
 
     total_new_aum    = sum(c["deal_value"] for c in closes)
@@ -326,12 +351,18 @@ def run(dry_run=False, verbose=False):
                 "week5_at":        datetime.now().isoformat(),
             })
 
+        for ef, rec in declined_pairs:
+            rec["debriefed_at"] = datetime.now().isoformat()
+            with open(ef, "w") as f:
+                json.dump(rec, f, indent=2)
+
         save_pipeline_state(state)
         print(f"   ✅ Pipeline cycle complete — all records marked week=5")
-        print(f"\n   🎉 New AUM added to the fund: ${total_new_aum:,.0f}")
+        if closes:
+            print(f"\n   🎉 New AUM added to the fund: ${total_new_aum:,.0f}")
         print(f"   ▶️  Run fetch_prospects.py to start the next cycle")
 
-    return len(eligible)
+    return len(eligible) + len(declined_records)
 
 
 def _fallback_debrief(summary):
@@ -357,6 +388,12 @@ def _fallback_debrief(summary):
         lines.append(f"We met with {len(no_closes)} FA(s) who didn't commit this time:")
         for c in no_closes:
             lines.append(f"  • {c['fa_name']}: {c['meeting_activity']} at {c['meeting_venue']} — worth a follow-up next cycle")
+        lines.append("")
+    declined = summary.get("declined", [])
+    if declined:
+        lines.append(f"{len(declined)} prospect(s) declined before a meeting:")
+        for d in declined:
+            lines.append(f"  • {d['fa_name']} ({d['firm']}){': ' + d['reply'] if d.get('reply') else ''}")
         lines.append("")
     lines.append("More soon. — Venus | Obsidian Capital")
     return "\n".join(lines)
