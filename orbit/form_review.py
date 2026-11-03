@@ -216,7 +216,14 @@ def read_form_image(kind, image_path, verbose=False):
     if verbose:
         print("  👁  reading form with {}".format(st["model"]))
     last = None
-    for attempt in range(2):
+    for attempt in range(3):
+        if attempt:
+            # A retry with the identical request at temperature 0 just reproduces the same bad output,
+            # so change it: some randomness, a bigger budget, and no JSON-mode (a model stuck emitting
+            # blank space inside JSON mode can run to the token limit and return only "{").
+            payload["temperature"] = 0.2
+            payload["max_tokens"] = max(payload["max_tokens"], 4500)
+            payload.pop("response_format", None)
         try:
             try:
                 resp = form_agent._post_json(form_agent.OPENROUTER_BASE + "/chat/completions",
@@ -228,12 +235,21 @@ def read_form_image(kind, image_path, verbose=False):
                                                  payload, st["api_key"], timeout=240)
                 else:
                     raise
-            msg = resp["choices"][0]["message"]
-            reading = _extract_json(msg.get("content") or "")
+            choice = resp["choices"][0]
+            msg = choice["message"]
+            try:
+                reading = _extract_json(msg.get("content") or "")
+            except ReviewError as e:
+                if choice.get("finish_reason") == "length":
+                    used = (resp.get("usage") or {}).get("completion_tokens")
+                    raise ReviewError("the review model hit its output limit before finishing the JSON "
+                                      "(finish_reason=length, {} completion tokens) — not a timeout. "
+                                      "Start of output: {}".format(used, (msg.get("content") or "").strip()[:80]))
+                raise
             _derive_delivery(reading)
             return reading, {"model": st["model"], "cost": (resp.get("usage") or {}).get("cost")}
         except ReviewError as e:
-            last = e                                     # bad JSON: one more try
+            last = e                                     # bad or cut-off JSON: try again, differently
         except form_agent.OpenRouterError as e:
             raise ReviewError("OpenRouter error — {}".format(e))
         except form_agent.FormGenerationError as e:

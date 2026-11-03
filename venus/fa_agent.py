@@ -54,6 +54,34 @@ def get_fa_profile(fa_id, advisors):
     return None
 
 
+def fund_context(fund):
+    """Full OCRFF track record for the FA to look up: long-term first, then calendar years, then recent."""
+    perf = fund.get("performance", {})
+
+    def row(label, key):
+        p = perf.get(key)
+        if not p:
+            return None
+        return "- {}: OCRFF {:+.1f}% vs S&P {:+.1f}% (alpha {:+.1f}%)  [{}]".format(
+            label, p["ocrff"], p["sp500"], p["alpha"], p.get("period", ""))
+
+    long_rows = [row("Since inception, cumulative", "since_inception_total"),
+                 row("Since inception, annualized", "since_inception_ann"),
+                 row("5-year, annualized", "five_year_ann"),
+                 row("3-year, annualized", "three_year_ann")]
+    recent_rows = [row("1-year", "one_year"), row("6-month", "six_month"), row("Year to date", "ytd")]
+    annual = fund.get("annual_returns", {})
+    year_rows = ["- {}: OCRFF {:+.1f}% vs S&P {:+.1f}%".format(y, v["ocrff"], v["sp500"])
+                 for y, v in sorted(annual.items())]
+    parts = ["The Obsidian Capital Research Fund (OCRFF) is an AI-driven equity fund.",
+             "(Hypothetical backtest of the current model portfolio; S&P 500 shown for comparison.)",
+             "", "LONG-TERM RECORD:"] + [r for r in long_rows if r]
+    if year_rows:
+        parts += ["", "CALENDAR YEARS:"] + year_rows
+    parts += ["", "RECENT PERIODS:"] + [r for r in recent_rows if r]
+    return "\n".join(parts)
+
+
 def build_fa_prompt(email_record, fa, fund):
     """
     Build the FA gatekeeper prompt.
@@ -117,9 +145,7 @@ Subject: {email_record['subject']}
 ---
 
 FUND CONTEXT (if you want to look it up):
-The Obsidian Capital Research Fund (OCRFF) is an AI-driven equity fund.
-YTD: {fund['performance']['ytd']['ocrff']:+.1f}% vs S&P {fund['performance']['ytd']['sp500']:+.1f}%
-1-Year: {fund['performance']['one_year']['ocrff']:+.1f}% vs S&P {fund['performance']['one_year']['sp500']:+.1f}%
+{fund_context(fund)}
 
 YOUR TASK:
 Decide: is this pitch worth {fa['first_name']}'s time?
