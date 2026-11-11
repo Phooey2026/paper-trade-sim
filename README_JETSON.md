@@ -75,8 +75,6 @@ python3 orbit.py --issues orbit_issues_latest.json --verbose
 
 # 5. Venus sales pipeline
 cd ~/paper_trade/venus
-mkdir -p venus_outbox/archive
-mv venus_outbox/email_*.json venus_outbox/archive/ 2>/dev/null || true
 python3 fetch_prospects.py --strategy mixed
 python3 venus.py --week 1
 python3 fa_agent.py --all --verbose
@@ -419,12 +417,9 @@ the FA's blocked calendar time (previously hardcoded Mon 10:30 / Tue 1:00).
 `fetch_prospects.py --strategy` also accepts `sports` (any of MLB/NBA/NFL, generalizing
 the older `baseball`-only strategy, which still works on its own).
 
-**Archive old outbox before a new cycle:**
-```bash
-mkdir -p ~/paper_trade/venus/venus_outbox/archive
-mv ~/paper_trade/venus/venus_outbox/email_*.json \
-   ~/paper_trade/venus/venus_outbox/archive/
-```
+**Outbox history:** the Venus outbox is no longer archived between cycles. Venus skips any advisor already in the
+outbox ("already in pipeline"), so each advisor is pitched once. To deliberately re-pitch someone, move that
+advisor's `email_*.json` files out of `venus_outbox/` first.
 
 **Pipeline week prerequisites:**
 - Week 2 requires Week 1 + `fa_agent.py --all` to have run
@@ -557,7 +552,6 @@ whatever the FA actually asked for.
 │   ├── crm_clients_ORIGINAL.json  # clean CRM for test resets
 │   ├── nav_history.json      # ⭐ New — one line per NAV refresh
 │   ├── venus_outbox/
-│   │   └── archive/
 │   ├── fa_calendars/         # ⭐ Persisted FA weekly calendars
 │   ├── fa_responses/
 │   └── pipeline_reports/     # ⭐ Week 5 debrief JSON reports

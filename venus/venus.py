@@ -190,7 +190,7 @@ def build_venus_prompt(prospect):
                 f"\n\n{fa['first_name']} follows more than one team with games coming up — "
                 "pick whichever hook feels most natural to reference, you don't need to mention all of them."
             )
-        sports_context += "\nJay has access to tickets. Use this as a relationship hook if relevant."
+        sports_context += f"\nObsidian Capital has the tickets and Jay would love to take {fa['first_name']} to the game. Use this as a relationship hook if relevant."
     else:
         sports_context = "No live sports hook for this FA right now (no upcoming home game on file)."
 
@@ -209,13 +209,22 @@ def build_venus_prompt(prospect):
 
     return f"""You are Venus, an AI sales assistant for Obsidian Capital, an AI-driven investment research firm based in California.
 
-Your job: draft a short, personalized outreach email to get a face-to-face meeting.
+Your job: draft a short, personalized outreach email to get a face-to-face meeting between {fa['first_name']} and Jay.
+
+WHO'S WHO:
+- You are Venus, Obsidian Capital's AI sales assistant. You are NOT Jay, and you will not attend any meeting.
+- Jay is Obsidian Capital's founder and portfolio manager. The meeting you are asking for is between {fa['first_name']} and Jay. Jay hosts it; you only set it up.
+- Write as Venus in the first person, and talk about Jay in the third person ("Jay has tickets", "Jay would love to...").
+  Never write "Jay here", never sign as Jay, and never write "I'll see you there", "I've got tickets", or "I'd love to meet".
+- Everything in the PROSPECT PROFILE below is about {fa['first_name']}, not you or Jay. Never claim to share their school, team, hometown or hobbies
+  ("fellow ..."); say what you noticed instead ("saw you went to ...").
+- Never imply a prior relationship or past work with {fa['first_name']}. The only connection you may mention is the warm introduction, if one is listed below.
 
 WRITING STYLE:
 - Casual but professional. Think of how a savvy wholesaler writes — not a corporate robot.
 - Short: 4-6 sentences max. No walls of text.
 - Personal: reference their interests, an upcoming game for their team, or a mutual connection.
-- One clear call to action: ask for a meeting or a call.
+- One clear call to action: ask whether {fa['first_name']} would meet Jay (or have a short call with him).
 - Sign off as: — Venus | Obsidian Capital
 - Subject line should be punchy and personal, not generic.
 
@@ -227,7 +236,7 @@ AUM: ${fa['aum']:,.0f}
 Book size: {fa['book_size']} clients
 Interests: {interests}
 Education: {fa.get('education', 'N/A')}
-{"You are writing to assistant: " + fa['assistant_name'] if contact_is_assistant else "You are writing directly to the FA."}
+{"You are writing to " + fa['first_name'] + "'s assistant, " + fa['assistant_name'] + ". Ask them to find time on " + fa['first_name'] + "'s calendar for a meeting with Jay." if contact_is_assistant else "You are writing directly to " + fa['first_name'] + "."}
 
 {warm_ref}
 
