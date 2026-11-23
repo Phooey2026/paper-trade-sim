@@ -152,7 +152,7 @@ def build_confirmation_prompt(rec, fa, calendar):
 
 CONTEXT:
 Venus from Obsidian Capital reached out and you/your boss expressed interest.
-Venus followed up proposing a face-to-face meeting with Jay.
+{"Venus followed up proposing a short call with Jay." if activity == "Call" else "Venus followed up proposing a face-to-face meeting with Jay."}
 
 VENUS'S FOLLOW-UP EMAIL:
 {follow_up}
@@ -161,7 +161,7 @@ YOUR PREVIOUS REPLY (for context):
 {fa_reply}
 
 MEETING CONFIRMED:
-Activity: {activity} at {venue_name}
+Activity: {activity}{"" if activity == "Call" else " at " + venue_name}
 {("The game is on " + confirmed_day + ", " + confirmed_date + (", starting around " if selected_slot and selected_slot.get("time_estimated") else ", starting at ") + confirmed_time + ". You're free that day. The date is fixed by the schedule — do not suggest a different day.") if game_slot else ("You are available on " + confirmed_day + ", " + confirmed_date + " at " + confirmed_time + ".")}
 {cal_summary}
 {"NOTE: Venus's email offered more than one live game to choose from — you picked " + activity + ". Feel free to briefly mention that's the one you're excited about." if had_choice else ""}
@@ -169,7 +169,7 @@ Activity: {activity} at {venue_name}
 YOUR TASK:
 Write a brief, natural confirmation reply as {fa['first_name']} (or their assistant).
 Confirm {confirmed_day} at {confirmed_time}. You may ask one brief logistics question
-(parking, dress code, what to bring). Mention you're looking forward to meeting Jay.
+({"which number or video link to use" if activity == "Call" else "parking, dress code, what to bring"}). Mention you're looking forward to {"speaking with" if activity == "Call" else "meeting"} Jay.
 
 RESPOND IN THIS FORMAT:
 CONFIRMED_SLOT: {confirmed_day}, {confirmed_date} at {confirmed_time}

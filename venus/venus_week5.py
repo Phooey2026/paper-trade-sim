@@ -84,6 +84,28 @@ def find_declined(outbox_dir=None):
     return out
 
 
+def _fund_value():
+    """Total fund value from neptune_holdings.json (one level up), or None."""
+    try:
+        path = os.path.join(os.path.dirname(SCRIPT_DIR), "neptune_holdings.json")
+        with open(path) as f:
+            return float(json.load(f)["summary"]["total_portfolio_value"])
+    except Exception:
+        return None
+
+
+def _scale_note(total_aum):
+    """Tell the model how big this cycle's AUM is relative to the fund, so the
+    debrief's enthusiasm is proportionate."""
+    fund = _fund_value()
+    if not fund or total_aum <= 0:
+        return ""
+    pct = total_aum / fund * 100
+    return (f"SCALE: ${total_aum:,.0f} of new AUM is {pct:.2f}% of the ~${fund/1e6:,.0f}M fund. "
+            f"Describe it in proportion: under about 0.5% of the fund is a solid, welcome add, not "
+            f"a 'huge', 'massive' or 'big' win. Save strong language for something that moves the fund.\n\n")
+
+
 def build_debrief_prompt(cycle_summary):
     """Build Venus's debrief email prompt."""
     closes     = cycle_summary["closes"]
@@ -145,20 +167,21 @@ TOTALS:
 - Close rate (meetings to close): {close_rate:.1f}%
 - Prospects contacted: {cycle_summary['total_contacted']}
 
-{no_meeting_note}YOUR TASK:
+{no_meeting_note}{_scale_note(total_aum)}YOUR TASK:
 Write a 300-400 word debrief email to Jay. This is Venus calling Jay right after 
-the last meeting closed — excited, professional, specific.
+the last meeting closed — pleased, professional, specific.
 
 TONE & STYLE:
 - Voice-memo energy: like you're talking out loud, not writing a report
-- Lead with the good news first (closes) — be genuinely enthusiastic on wins
+- Lead with the good news first (closes). Be positive but proportionate: pleased, specific, no hype
 - Be specific: name the FA, the venue, what clicked
 - For no-closes: be honest about why and what you'd do differently
 - End with 2-3 specific recommendations for the next cycle (who to re-engage, 
   what activity worked best, any patterns you noticed)
 - Sign as: — Venus | Obsidian Capital Sales
 
-SUBJECT LINE: Make it feel urgent and personal, like a voice message subject.
+SUBJECT LINE: A plain, specific email subject (e.g. "Pipeline debrief: 1 close, $118,595 new AUM").
+Do NOT put "Voicemail", "Voice memo" or similar in the subject, and no hype words.
 
 RESPOND WITH ONLY:
 SUBJECT: [subject line]

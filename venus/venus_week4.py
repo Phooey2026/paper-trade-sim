@@ -82,7 +82,7 @@ def calculate_close_probability(fa, activity, venues_data):
 
     # Activity modifier
     activity_mods = venues_data.get("activity_close_modifiers", {})
-    modifiers += activity_mods.get(activity, 0.0)
+    modifiers += activity_mods.get(activity, -0.05 if activity == "Call" else 0.0)
 
     prob = base + modifiers
     prob = max(0.25, min(0.85, prob))  # clamp to [25%, 85%]
@@ -138,8 +138,8 @@ def generate_meeting_narrative(fa, confirmed, close_probability, closed, deal_va
 a sales meeting with {fa['name']}, a financial advisor at {fa['firm']} in {fa['territory']}, CA.
 
 MEETING DETAILS:
-- Activity: {activity} at {venue_name}
-- Address: {venue_addr}
+- Activity: {"Video/phone call (no physical venue)" if activity == "Call" else activity + " at " + venue_name}
+- Address: {"n/a — remote" if activity == "Call" else venue_addr}
 - Date/Time: {meet_date} at {meet_time}
 - FA interests: {', '.join(fa.get('interests', []))}
 - FA book size: {fa['book_size']} clients | AUM: ${fa['aum']:,.0f} | Tier {fa['tier']}
@@ -155,6 +155,7 @@ NARRATIVE STYLE:
 - If football: the quarter, a big play or drive, the tailgate/stadium energy, what clicked in the conversation
 - If outdoor activity: conditions (wind, trail, surf), the physical setting, pace of conversation
 - If lunch/coffee: the room, what was ordered, the vibe of the conversation
+- If call: it was a remote call. Jay is at his desk or on the road; no venue, no food, no setting to describe. Focus on the conversation: what the advisor asked about the research process and the numbers, and the moment it turned. Do not invent a physical location.
 - On a close: end with the handshake moment and what happens next
 - On no close: end with a clear read on the real reason and the specific next step
 - DO NOT sign off — this is a voice memo, not an email
@@ -180,7 +181,8 @@ NARRATIVE STYLE:
         # Fallback narrative
         outcome_word = "closed" if closed else "did not close"
         return (
-            f"Met {fa['first_name']} {fa['last_name']} at {venue_name} on {meet_date}. "
+            (f"Spoke with {fa['first_name']} {fa['last_name']} by call on {meet_date}. " if activity == "Call"
+             else f"Met {fa['first_name']} {fa['last_name']} at {venue_name} on {meet_date}. ") +
             f"We had a good {activity.lower()} and discussed the OCRFF performance story. "
             f"{fa['first_name']} was {'receptive and committed to moving forward' if closed else 'engaged but not ready to commit today'}. "
             f"{'Deal value: $' + f'{deal_value:,.0f}' + ' opened across new client accounts.' if closed else 'Will follow up next quarter.'}"

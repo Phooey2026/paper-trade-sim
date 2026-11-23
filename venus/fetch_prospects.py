@@ -16,6 +16,7 @@ Usage:
 
 import json
 import os
+import glob
 import random
 import argparse
 from datetime import date, datetime, timedelta
@@ -24,6 +25,7 @@ SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
 CRM_FILE     = os.path.join(SCRIPT_DIR, "crm_advisors.json")
 FUND_FILE    = os.path.join(SCRIPT_DIR, "ocrff_fund.json")
 OUT_FILE     = os.path.join(SCRIPT_DIR, "venus_prospects_latest.json")
+OUTBOX_DIR   = os.path.join(SCRIPT_DIR, "venus_outbox")
 
 TODAY = date.today().isoformat()
 
@@ -146,12 +148,40 @@ def score_prospect(fa):
     return score
 
 
-def select_prospects(advisors, strategy="mixed", count=5, specific_ids=None, seed=None):
-    """Select prospect FAs based on strategy."""
+def already_pitched_ids(outbox_dir=None):
+    """fa_ids that already have an outreach email in the outbox. Each advisor is
+    pitched once; venus.py --week 1 skips them anyway, so selecting them here only
+    wastes prospect slots. Internal records (orbit alerts, closure notices, debriefs)
+    are not outreach and are ignored."""
+    outbox_dir = outbox_dir or OUTBOX_DIR
+    ids = set()
+    for f in glob.glob(os.path.join(outbox_dir, "email_*.json")):
+        try:
+            with open(f) as fh:
+                rec = json.load(fh)
+        except Exception:
+            continue
+        if rec.get("source") in ("orbit_alert", "closure_notice", "debrief"):
+            continue
+        fa_id = rec.get("fa_id")
+        if fa_id and fa_id != "INTERNAL":
+            ids.add(fa_id)
+    return ids
+
+
+def select_prospects(advisors, strategy="mixed", count=5, specific_ids=None, seed=None,
+                     exclude_ids=None):
+    """Select prospect FAs based on strategy. exclude_ids: fa_ids to leave out
+    (advisors already pitched). Ignored when specific_ids is given."""
     if seed is not None:
         random.seed(seed)
 
     prospects = [a for a in advisors if a["status"] == "PROSPECT"]
+    if exclude_ids and not specific_ids:
+        before = len(prospects)
+        prospects = [a for a in prospects if a["fa_id"] not in exclude_ids]
+        if before - len(prospects):
+            print(f"  ↪ Skipping {before - len(prospects)} advisor(s) already pitched (in venus_outbox)")
 
     if specific_ids:
         selected = [a for a in prospects if a["fa_id"] in specific_ids]
@@ -283,6 +313,8 @@ def main():
                         default="mixed", help="Selection strategy")
     parser.add_argument("--fa-id", nargs="+", help="Specific FA IDs to fetch")
     parser.add_argument("--seed", type=int, help="Random seed for reproducible selection")
+    parser.add_argument("--include-pitched", action="store_true",
+                        help="Also consider advisors already in venus_outbox (default: skip them)")
     parser.add_argument("--output", type=str, default=OUT_FILE)
     args = parser.parse_args()
 
@@ -301,7 +333,8 @@ def main():
         strategy=args.strategy,
         count=args.count,
         specific_ids=args.fa_id,
-        seed=args.seed
+        seed=args.seed,
+        exclude_ids=None if args.include_pitched else already_pitched_ids()
     )
 
     print(f"\n📋 Strategy: {args.strategy} | Fetching {len(prospects_raw)} prospects\n")

@@ -96,6 +96,33 @@ def compute_blocked_buys(max_order):
     return blocked
 
 
+def size_sell_amount(ticker, amount, order_range):
+    """
+    Avoid leaving a tiny stub position behind. After a SELL, what remains should be
+    either zero or at least the minimum order size (otherwise the residue can never
+    be sold without breaking the order-size rule, and it just sits there).
+      - position fits in one order (value <= max): if the draw would leave less than
+        the minimum, sell the whole position (neptune.py caps a SELL at position value).
+      - position is larger than one order: if the draw would leave less than the
+        minimum, sell less now so the remainder can be closed in a single order later.
+    """
+    lo, hi = order_range
+    holdings = load_json(HOLDINGS_FILE, "neptune_holdings.json") or {}
+    pos = holdings.get("positions", {}).get(ticker)
+    if not pos:
+        return amount
+    mv = float(pos.get("market_value", 0) or 0)
+    if mv <= 0:
+        return amount
+    if mv <= hi:
+        if mv - amount < lo:
+            return int(min(hi, max(lo, -(-mv // 100) * 100)))
+        return amount
+    if mv - amount < lo:
+        return int(max(lo, ((mv - lo) // 100) * 100))
+    return amount
+
+
 def get_holdings_tickers():
     holdings = load_json(HOLDINGS_FILE, "neptune_holdings.json")
     if not holdings:
@@ -151,6 +178,8 @@ def generate_jupiter_orders(rankings_data, research_data, holdings_tickers,
                 print(f"  ⛔ {ticker}: BUY not proposed — {blocked_buys[ticker]}")
                 continue
             amount = round(random.uniform(*order_range) / 100) * 100
+            if action == "SELL":
+                amount = size_sell_amount(ticker, amount, order_range)
             orders.append({
                 "order_id": f"JUP-{ticker}-{datetime.now().strftime('%Y%m%d%H%M%S')}",
                 "agent": "jupiter",
@@ -252,6 +281,7 @@ def generate_jupiter_orders(rankings_data, research_data, holdings_tickers,
     if include_sells:
         for i, cand in enumerate(avoid_candidates[:sell_count]):
             amount = round(random.uniform(*order_range) / 100) * 100
+            amount = size_sell_amount(cand["ticker"], amount, order_range)
             orders.append({
                 "order_id": f"JUP-{cand['ticker']}-{ts}-S{i:02d}",
                 "agent": "jupiter",
@@ -439,6 +469,8 @@ def generate_mercury_orders(mercury_data, holdings_tickers, order_range=None, bl
         rationale += decision_note
 
         amount = round(random.uniform(*order_range) / 100) * 100
+        if action == "SELL":
+            amount = size_sell_amount(ticker, amount, order_range)
         orders.append({
             "order_id": f"MER-{ticker}-{ts}",
             "agent": "mercury",
@@ -496,7 +528,8 @@ def main():
     print(f"   Generated: {len(jupiter_orders)} orders")
 
     print(f"\n⚡ Generating Mercury orders (ETF proxies)...")
-    mercury_orders = generate_mercury_orders(mercury_data, holdings_tickers, order_range=order_range, blocked_buys=blocked_buys)
+    mercury_orders = generate_mercury_orders(mercury_data, holdings_tickers, order_range=order_range,
+                                             blocked_buys=blocked_buys)
     print(f"   Generated: {len(mercury_orders)} orders")
 
     all_orders = jupiter_orders + mercury_orders

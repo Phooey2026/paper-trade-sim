@@ -18,6 +18,7 @@ Updates: outbox email JSON + pipeline_state.json
 
 import json
 import os
+import re
 import subprocess
 # ollama_client provides Hermes→Ollama fallback for Mac compatibility
 # ollama_client.py lives in paper_trade/ (parent of venus/)
@@ -284,7 +285,52 @@ def _dur_to_min(d):
 _SLOT_CANDIDATES = ["8:30 AM", "10:30 AM", "12:00 PM", "1:00 PM", "3:00 PM", "4:30 PM"]
 
 
-def compute_open_slots(calendar, open_days, duration="90 min", n=2, rng=None):
+_WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+_CALL_RE = re.compile(r"\b(call|calls|phone|zoom|video chat|video call|teams call|virtual)\b", re.I)
+_IN_PERSON_RE = re.compile(
+    r"\b(in[- ]person|face[- ]to[- ]face|coffee|lunch|dinner|drinks|breakfast|games?|tickets|"
+    r"golf|hike|hiking|surf|surfing|sail|sailing|fishing|tennis|skiing)\b", re.I)
+
+
+def _detect_meeting_preferences(reply_text):
+    """
+    Read what the advisor actually asked for in their reply.
+      format: "call"  if they asked for a call / phone / video chat and did NOT name
+                      an in-person plan or activity (so "happy to grab coffee or hop on
+                      a call" is left to the normal activity logic);
+              None    otherwise.
+      days:   weekday names they pointed at ("late next week" -> Thu/Fri, "early next
+              week" -> Mon/Tue, "midweek" -> Wed/Thu, or explicit day names), else None.
+      timing_phrase: the words they used, for Venus to echo back.
+    """
+    prefs = {"format": None, "days": None, "timing_phrase": None}
+    if not reply_text:
+        return prefs
+    low = reply_text.lower()
+
+    wants_call = bool(_CALL_RE.search(reply_text))
+    # A team name alone ("good eye on the Giants connection") is not an in-person plan;
+    # only an explicit in-person word or activity is.
+    in_person = bool(_IN_PERSON_RE.search(reply_text))
+    if wants_call and not in_person:
+        prefs["format"] = "call"
+
+    m = re.search(r"\b(late|end of|early|mid|middle of)[ -]?(?:next )?(?:week|the week)\b|\bmidweek\b", low)
+    if m:
+        word = m.group(1) or "mid"
+        prefs["days"] = {"late": ["Thursday", "Friday"], "end of": ["Thursday", "Friday"],
+                         "early": ["Monday", "Tuesday"],
+                         "mid": ["Wednesday", "Thursday"], "middle of": ["Wednesday", "Thursday"]}[word]
+        prefs["timing_phrase"] = m.group(0).strip() + (" next week" if "next" not in m.group(0) and "week" in m.group(0) and "midweek" not in m.group(0) else "")
+    else:
+        named = [d for d in _WEEKDAYS if re.search(r"\b" + d.lower() + r"s?\b", low)]
+        if named:
+            prefs["days"] = named
+            prefs["timing_phrase"] = " / ".join(named)
+    return prefs
+
+
+def compute_open_slots(calendar, open_days, duration="90 min", n=2, rng=None, prefer_days=None):
     """
     Choose n meeting times that do NOT overlap anything on the FA's calendar, on different days
     (earliest days first). Replaces the hardcoded Monday 10:30 / Tuesday 1:00, which overlapped
@@ -294,23 +340,35 @@ def compute_open_slots(calendar, open_days, duration="90 min", n=2, rng=None):
     rng = rng or _r
     need = _dur_to_min(duration)
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-    slots = []
-    for i, day in enumerate(days):
-        if len(slots) >= n or i >= len(open_days):
-            break
-        busy = [(_clock_to_min(e["time"]), _clock_to_min(e["time"]) + _dur_to_min(e.get("duration")))
-                for e in calendar.get("calendar", {}).get(day, []) if _clock_to_min(e.get("time"))is not None]
-        free = []
-        for c in _SLOT_CANDIDATES:
-            a = _clock_to_min(c)
-            if all(a + need <= b0 or a >= b1 for b0, b1 in busy):
-                free.append(c)
-        if free:
-            slots.append({"day": day, "date": open_days[i].isoformat(), "time": rng.choice(free), "duration": duration})
-    return slots
+
+    def _pick(only_days):
+        found = []
+        for i, day in enumerate(days):
+            if len(found) >= n or i >= len(open_days):
+                break
+            if only_days and day not in only_days:
+                continue
+            busy_ = _busy_for(day)
+            free_ = [c for c in _SLOT_CANDIDATES
+                     if all(_clock_to_min(c) + need <= b0 or _clock_to_min(c) >= b1 for b0, b1 in busy_)]
+            if free_:
+                found.append({"day": day, "date": open_days[i].isoformat(),
+                              "time": rng.choice(free_), "duration": duration})
+        return found
+
+    def _busy_for(day):
+        return [(_clock_to_min(e["time"]), _clock_to_min(e["time"]) + _dur_to_min(e.get("duration")))
+                for e in calendar.get("calendar", {}).get(day, []) if _clock_to_min(e.get("time")) is not None]
+
+    # honor the days the advisor asked for; if none of them is free, fall back to any day
+    if prefer_days:
+        preferred = _pick(set(prefer_days))
+        if preferred:
+            return preferred
+    return _pick(None)
 
 
-def select_activity_and_venue(fa, venues, sports_hooks=None, email_record=None):
+def select_activity_and_venue(fa, venues, sports_hooks=None, email_record=None, prefs=None):
     """
     Pick the best activity for this FA, plus any other options that are
     equally live right now.
@@ -334,6 +392,12 @@ def select_activity_and_venue(fa, venues, sports_hooks=None, email_record=None):
     interest_map = venues.get("activity_to_interest_map", {})
     live_hooks   = _live_sport_hooks(sports_hooks)
     live_team_codes = {(h["league"], h["team_code"]) for h in live_hooks}
+
+    # 00. The advisor asked for a call (and named no in-person plan): honor it.
+    if prefs and prefs.get("format") == "call":
+        return ("Call",
+                {"name": "a video call", "address": "video/phone call — Jay sends the link"},
+                modifiers.get("Call", -0.05), [])
 
     # 0. Check if a specific activity was already discussed in Week 1
     if email_record:
@@ -619,11 +683,13 @@ def _venue_desc(activity, venue):
         )
     elif activity in _OUTDOOR_ACTIVITIES:
         return f"{venue.get('name')} — {venue.get('notes', '')}."
+    elif activity == "Call":
+        return "a short video or phone call; Jay will send the link once they pick a time."
     else:
         return f"{venue.get('name')} — {venue.get('address', '')}."
 
 
-def draft_meeting_proposal(email_record, fa, calendar, activity, venue, venues_data, alt_options=None):
+def draft_meeting_proposal(email_record, fa, calendar, activity, venue, venues_data, alt_options=None, prefs=None):
     """Draft Venus follow-up email proposing the meeting with Jay.
     alt_options (optional): list of (activity, venue, close_modifier) for
     other live sport hooks the FA also follows — when present, Venus's
@@ -665,6 +731,8 @@ def draft_meeting_proposal(email_record, fa, calendar, activity, venue, venues_d
         activity_pitch = f"catch a {activity.lower()} game at {venue.get('name')} with Jay"
     elif activity in _OUTDOOR_ACTIVITIES:
         activity_pitch = f"get out for some {activity.lower()} at {venue.get('name')} with Jay"
+    elif activity == "Call":
+        activity_pitch = "set up a short call with Jay"
     else:
         activity_pitch = f"have Jay meet you at {venue.get('name')}"
 
@@ -719,9 +787,23 @@ They asked for a deck or one-pager before committing. Address this directly:
   Jay would love to walk you through it in person — would either of these times work?"
 """
 
+    prefs = prefs or {}
+    meeting_kind = "call" if activity == "Call" else "face-to-face meeting"
+    stated_block = ""
+    if activity == "Call":
+        stated_block += (
+            "\nTHEY ASKED FOR A CALL:\n"
+            "- Propose a short call (about 30 minutes, video or phone) with Jay. Do NOT suggest "
+            "coffee, a game, a hike or any in-person meeting; they asked for a call, so give them one.\n"
+            "- Say Jay will send the dial-in/video link once they pick a time.\n")
+    if prefs.get("timing_phrase"):
+        stated_block += (
+            f"\nTHEY SAID WHEN THEY WANT TO TALK: \"{prefs['timing_phrase']}\". The times below were "
+            f"chosen to fit that; acknowledge it briefly (e.g. \"later in the week, as you suggested\").\n")
+
     prompt = f"""You are Venus, AI sales assistant for Obsidian Capital.
 
-You received a positive reply to your outreach. Follow up to lock in a face-to-face meeting
+You received a positive reply to your outreach. Follow up to lock in a {meeting_kind}
 between the FA and Jay (Obsidian Capital's portfolio manager). You will NOT be at this meeting.
 
 THE ORIGINAL EMAIL THEY REPLIED TO:
@@ -732,9 +814,9 @@ THEIR REPLY:
 
 YOUR TASK:
 Draft a short, warm follow-up email proposing the meeting with specific time options.
-{materials_instruction}
+{materials_instruction}{stated_block}
 MEETING DETAILS:
-- Activity: {activity} at {venue.get('name', 'TBD')}
+- Activity: {activity}{'' if activity == 'Call' else ' at ' + venue.get('name', 'TBD')}
 - Venue: {venue_desc}
 - When (use EXACTLY these dates/times; for a game, the schedule fixes it — do not invent other times):
 {slot_lines}
@@ -925,8 +1007,19 @@ def run(dry_run=False, verbose=False):
             # Generate/load FA calendar
             print(f"   📅 Generating calendar for {fa['first_name']}...")
             calendar = generate_fa_calendar(fa, open_days, venues_data)
-            # Non-game meetings (coffee/lunch/outdoor) use slots that don't collide with the FA's blocked time
-            calendar["open_slots"] = compute_open_slots(calendar, open_days)
+
+            # What did the advisor actually ask for? (a call? "late next week"?)
+            prefs = _detect_meeting_preferences(rec.get("response_body", ""))
+            if prefs["format"] or prefs["days"]:
+                print(f"   👂 They asked for: "
+                      + ", ".join(x for x in [("a call" if prefs["format"] == "call" else ""),
+                                              (prefs["timing_phrase"] or "")] if x))
+
+            # Non-game meetings (coffee/lunch/outdoor/call) use slots that don't collide with the FA's blocked time
+            calendar["open_slots"] = compute_open_slots(
+                calendar, open_days,
+                duration="30 min" if prefs["format"] == "call" else "90 min",
+                prefer_days=prefs["days"])
             open_slots = calendar.get("open_slots", [])
             print(f"      Open slots (non-game): {[s['day'] + ' ' + s['time'] for s in open_slots]}")
 
@@ -935,7 +1028,7 @@ def run(dry_run=False, verbose=False):
             # so this can tell whether a hook is actually live right now.
             sports_hooks = rec.get("sports_hooks", [])
             activity, venue, close_mod, alt_options = select_activity_and_venue(
-                fa, venues_data, sports_hooks=sports_hooks, email_record=rec
+                fa, venues_data, sports_hooks=sports_hooks, email_record=rec, prefs=prefs
             )
             print(f"   🎯 Activity: {activity} @ {venue.get('name', 'TBD')}"
                   + (f"  (+{len(alt_options)} more live hook{'s' if len(alt_options) > 1 else ''})" if alt_options else ""))
@@ -948,7 +1041,7 @@ def run(dry_run=False, verbose=False):
                     print(f"      ⚠️  {_a}: game date not readable from next_home — falling back to open slots")
 
             # Draft meeting proposal email
-            subject, body = draft_meeting_proposal(rec, fa, calendar, activity, venue, venues_data, alt_options=alt_options)
+            subject, body = draft_meeting_proposal(rec, fa, calendar, activity, venue, venues_data, alt_options=alt_options, prefs=prefs)
             print(f"   📧 Proposal subject: {subject}")
             if verbose:
                 print(f"\n{body}\n")
@@ -965,6 +1058,7 @@ def run(dry_run=False, verbose=False):
                     for a, v, _cm in alt_options
                 ],
                 "open_slots":    open_slots,
+                "advisor_preferences": prefs,
                 "proposed_at":   datetime.now().isoformat(),
                 "follow_up_subject": subject,
                 "follow_up_body":    body,

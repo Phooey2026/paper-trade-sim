@@ -197,6 +197,21 @@ def build_venus_prompt(prospect):
     ytd    = perf["ytd"]
     one_yr = perf["one_year"]
     five_yr = perf["five_year_ann"]
+
+    def _perf_line(label, key):
+        d = perf.get(key)
+        if not d or d.get("ocrff") is None:
+            return ""
+        return (f"- {label}: OCRFF {d['ocrff']:+.1f}% vs S&P 500 {d['sp500']:+.1f}% "
+                f"(alpha: {d['alpha']:+.1f}%)\n")
+
+    perf_block = (
+        _perf_line("Since inception (Jan 2020), annualized", "since_inception_ann")
+        + _perf_line("3-Year annualized", "three_year_ann")
+        + _perf_line("5-Year annualized", "five_year_ann")
+        + _perf_line("1-Year", "one_year")
+        + _perf_line("YTD", "ytd")
+    )
     interests = ", ".join(fa.get("interests", []))
     connections = fa.get("connections", [])
     warm_ref = (
@@ -242,11 +257,16 @@ Education: {fa.get('education', 'N/A')}
 
 {sports_context}
 
-OCRFF PERFORMANCE (Obsidian Capital Research Fund):
-- YTD: OCRFF {ytd['ocrff']:+.1f}% vs S&P 500 {ytd['sp500']:+.1f}% (alpha: {ytd['alpha']:+.1f}%)
-- 1-Year: OCRFF {one_yr['ocrff']:+.1f}% vs S&P 500 {one_yr['sp500']:+.1f}%
-- 5-Year Annualized: OCRFF {five_yr['ocrff']:+.1f}% vs S&P 500 {five_yr['sp500']:+.1f}%
-Use performance data selectively — only if it strengthens the email. Don't force it.
+OCRFF PERFORMANCE (Obsidian Capital Research Fund). These are hypothetical backtested
+results of the current model portfolio, not audited track-record returns:
+{perf_block}
+PERFORMANCE RULES:
+- Use performance selectively, only if it strengthens the email. Don't force it.
+- If you quote a return, always give the S&P 500 figure for the SAME period next to it, and
+  call it backtested (e.g. "backtested alpha of +2.9% a year since 2020 vs the S&P 500").
+  Never quote the fund's return on its own: a bare number reads as a claim to beat the market.
+- Never describe a period as outperformance when its alpha is negative. Leaning on the
+  long-term periods (since inception, 3-year) is fine; do not claim the recent periods beat the index.
 
 STRATEGY NOTES:
 {strategy_block}
